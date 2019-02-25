@@ -462,12 +462,13 @@ class Rocket:
             for k, v in my_spec.get("_files_out").items():
                 files = glob.glob(os.path.join(launch_dir, v))
                 if files:
-                    filepaths[k] = sorted(files)[-1]
-            fwaction.update_spec["_files_prev"] = filepaths
+                    filepath = sorted(files)[-1] # why only one file?
+                    fwaction.mod_spec.append( {
+                      "_set": {"_files_prev->{:s}".format(k): filepath }
+                    } )
         elif "_files_prev" in my_spec:
             # This ensures that _files_prev are not passed from Firework to
             # Firework. We do not want output files from fw1 to be used by fw3
             # in the sequence of fw1->fw2->fw3
             fwaction.update_spec["_files_prev"] = {}
-
         return fwaction
