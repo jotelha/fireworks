@@ -691,8 +691,9 @@ class RecoverLammpsTask(FiretaskBase):
                     recover_ft,
                     spec = recover_fw_spec, # inherit thi Firework's spec
                     name = repeated_recover_fw_name,
-                    parents = [ restart_fw ], fw_id = consecutive_fw_id  )
-                    consecutive_fw_id = consecutive_fw_id - 1
+                    parents = [ restart_fw ],
+                    fw_id = consecutive_fw_id  )
+                consecutive_fw_id = consecutive_fw_id - 1
                 print("Create repeated recover Firework {} with id {} and specs {}".format(
                     recover_fw.name, recover_fw.fw_id, recover_fw.spec) )
 
