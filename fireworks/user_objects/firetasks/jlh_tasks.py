@@ -529,13 +529,13 @@ class RecoverLammpsTask(FiretaskBase):
         if type(other_glob_patterns) is not list:
             other_glob_patterns = [ other_glob_patterns ]
         for other_glob_pattern in other_glob_patterns:
-            print("Processing glob pattern {}".format(glob_pattern))
+            print("Processing glob pattern {}".format(other_glob_pattern))
             file_list.extend(
                 glob.glob( path.join( path_prefix, other_glob_pattern )  )
             )
 
         # copy other files if necessary
-        if len(file_list > 0):
+        if len(file_list) > 0:
             for f in file_list:
                 print("File {} will be forwarded.".format(f))
                 try:
@@ -594,14 +594,19 @@ class RecoverLammpsTask(FiretaskBase):
             # check whether this Firework's _files_out can serve subsequent
             # Firework's _files_in:
             files_prev = {}
-            if "_files_out" in fw_spec and fw_spec["_files_out"] is dict \
-                and "_files_in" in detour_fw.spec \
-                and detour_fw.spec["_files_in"] is dict:
+            if ("_files_out" in fw_spec) and (type(fw_spec["_files_out"]) is dict) \
+                and ("_files_in" in detour_fw.spec) \
+                and (type(detour_fw.spec["_files_in"]) is dict):
+
+                print("Current recovery '_files_out': {}".format(fw_spec["_files_out"]))
+                print("Subsequent detour 'files_in': {}".format(detour_fw.spec["_files_in"]))
 
                 # find overlap between current fw's outfiles and detour fw's
                 # infiles:
                 files_io_overlap = fw_spec["_files_out"].keys() \
                     & detour_fw.spec["_files_in"].keys()
+                print("Current recovery '_files_out' and subsequent detour "
+                    "'files_in' overlap: {}".format(files_io_overlap))
 
                 for k in files_io_overlap:
                     files = glob.glob(os.path.join(curdir,
@@ -617,7 +622,7 @@ class RecoverLammpsTask(FiretaskBase):
                     detour_fw.name, detour_fw.fw_id, detour_fw.spec) )
             detour_fws.append(detour_fw)
 
-        # append restart fireworks if restart file exists:
+        # append restart fireworks if restart file exists
         if current_restart_file is not None and restart_fw_dict:
             current_restart_file_basename = path.basename(current_restart_file)
             print("File {} will be forwarded.".format(
@@ -631,30 +636,6 @@ class RecoverLammpsTask(FiretaskBase):
                     "There was an error copying from {} "
                     "to {}".format(current_restart_file, default_restart_file) )
 
-            # copied from fireworks.core.rocket.decorate_fwaction
-            # for some reason, _files_prev is not updated automatically when
-            # returning the raw FWAction object.
-            # Possibly, update_spec or mod_spec is evaluated before
-            # additions and detours are appended?
-            files_prev = {}
-            if "_files_out" in fw_spec and fw_spec["_files_out"] is dict \
-                and "_files_in" in restart_fw.spec \
-                and restart_fw.spec["_files_in"] is dict:
-
-                # find overlap between current fw's outfiles and restart fw's
-                # infiles:
-                files_io_overlap = fw_spec["_files_out"].keys() \
-                    & restart_fw.spec["_files_in"].keys()
-
-                for k in files_io_overlap:
-                    files = glob.glob(os.path.join(curdir,
-                        fw_spec["_files_out"][k]))
-                    if files:
-                        files_prev[k] = os.path.abspath(sorted(files)[-1])
-                        print("This Firework provides {}: {}".format(
-                            k, fw_spec["_files_out"][k] ), " for subsequent "
-                            "restart Firework." )
-
             # try to derive number of restart from fizzled parent
             if prev_job_info and 'spec' in prev_job_info \
                 and 'restart_count' in prev_job_info['spec']:
@@ -667,12 +648,41 @@ class RecoverLammpsTask(FiretaskBase):
                 print("This is restart #{:d} of at most {:d} restarts.".format(
                     restart_count+1, max_restarts ) )
 
-                # append restart firework (defined as dict):
                 restart_fw = Firework.from_dict(restart_fw_dict)
                 restart_fw.fw_id = consecutive_fw_id
                 consecutive_fw_id = consecutive_fw_id - 1
+                # append restart firework (defined as dict):
                 restart_fw.spec["restart_count"] = restart_count
 
+
+                # copied from fireworks.core.rocket.decorate_fwaction
+                # for some reason, _files_prev is not updated automatically when
+                # returning the raw FWAction object.
+                # Possibly, update_spec or mod_spec is evaluated before
+                # additions and detours are appended?
+                files_prev = {}
+                if "_files_out" in fw_spec and type(fw_spec["_files_out"]) is dict \
+                    and "_files_in" in restart_fw.spec \
+                    and type(restart_fw.spec["_files_in"]) is dict:
+                    print("Current recovery '_files_out': {}".format(fw_spec["_files_out"]))
+                    print("Subsequent restart 'files_in': {}".format(restart_fw.spec["_files_in"]))
+    
+                    # find overlap between current fw's outfiles and restart fw's
+                    # infiles:
+                    files_io_overlap = fw_spec["_files_out"].keys() \
+                        & restart_fw.spec["_files_in"].keys()
+                    print("Current recovery '_files_out' and subsequent restart "
+                        "'files_in' overlap: {}".format(files_io_overlap))
+    
+                    for k in files_io_overlap:
+                        files = glob.glob(os.path.join(curdir,
+                            fw_spec["_files_out"][k]))
+                        if files:
+                            files_prev[k] = os.path.abspath(sorted(files)[-1])
+                            print("This Firework provides {}: {}".format(
+                                k, fw_spec["_files_out"][k] ), " for subsequent "
+                                "restart Firework." )
+    
                 # manually set _files_prev:
                 restart_fw.spec["_files_prev"] = files_prev
 
@@ -701,7 +711,8 @@ class RecoverLammpsTask(FiretaskBase):
 
                 # make repeated recovery fireworks dependent on all other
                 # fireworks (i.e. detour and restart) in list:
-                detour_fws_links[restart_fw] = [fw.fw_id for fw in detour_fws]
+                for fw in detour_fws:
+                    detour_fws_links[fw] = recover_fw
 
                 detour_fws.append(recover_fw)
 
