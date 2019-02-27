@@ -243,7 +243,7 @@ class Rocket:
                               '_all_update_spec': all_update_spec,
                               '_all_mod_spec': all_mod_spec}
                 Rocket.update_checkpoint(lp, launch_dir, launch_id, checkpoint)
- 
+
                 if lp:
                    l_logger.log(logging.INFO, "Task started: %s." % t.fw_name)
 
@@ -470,5 +470,6 @@ class Rocket:
             # This ensures that _files_prev are not passed from Firework to
             # Firework. We do not want output files from fw1 to be used by fw3
             # in the sequence of fw1->fw2->fw3
+            # jlh: does this happen??
             fwaction.update_spec["_files_prev"] = {}
         return fwaction

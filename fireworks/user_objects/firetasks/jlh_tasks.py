@@ -411,47 +411,93 @@ class RecoverLammpsTask(FiretaskBase):
     Activate _allow_fizzled_parents and append to LAMMPS run Firework.
     Will identify most recent restart file and initiate another LAMMPS run.
 
-    Args:
-        recover: bool (optional)
+    Runs any python function! Extremely powerful, which allows you to
+    essentially run any accessible method on the system. The optional inputs
+    and outputs lists may contain spec keys to add to args list and to make
+    the function output available in the curent and in children fireworks.
+
+    Required parameters:
+
+    Optional parameters:
+        - recover (bool):
           Pull launchdir from previous Firework if True.
           Otherwise assume output files to have been produced
           in same Firework. Default: True
-        restart_fw: dict (optional)
-          Appends LAMMPS restart run Firework to continue from restart file if
-          True. Task will not append anything if None.
-          Default: None
-        max_restart: int (optional)
+        # - restart_fw (dict or [dict]):
+        #   Single firework or list of Fireworks to append
+        #   (i.e. as LAMMPS restart run to continue from restart file).
+        #   If list, all fireworks will be independent of each other (no links).
+        #   Task will not append anything if None. Default: None
+        - restart_fw (dict):
+          Single firework to append only if restart file present (parent failed)
+          (i.e. as LAMMPS restart run to continue from restart file).
+          Task will not append anything if None. Default: None
+        - detour_fw (dict):
+          Single firework to append always, independent on parent's success.
+          (i.e.  LAMMPS post-processing).
+          Task will not append anything if None. Default: None
+        # Not implemented:
+        # - addition_wf (dict):
+        #   Workflow to append as addition. Default: None
+        - max_restart (int):
           Maximum number of repeated restarts (in case of 'restart' == True)
           Default: 5
-        restart_file_glob_patterns: (list of) str (optional)
+        - restart_file_glob_patterns (str or [str])
           Patterns for glob.glob to identify restart files.
           Attention: Be careful not to match any restart file that has been
           used as an input initially. Default: ['*.restart[0-9]']
-        fizzle_on_no_restart_file: bool (optional)
+        - other_glob_patterns (str or [str])
+          Patterns for glob.glob to identify other files to be forwarded.
+          Default: None
+        - default_restart_file (str):
+          Name of restart file to be read by subsequent LAMMPS restart run.
+          Most recent restart file found in fizzled parent will be copied
+          to new launchdir under this name.
+          Default: 'default.mpiio.restart'
+        - fizzle_on_no_restart_file (bool):
           Default: True
+        - repeated_recover_fw_name (str):
+          Name for repeated recovery fireworks.
+          Default: 'Repeated LAMMPS recovery'
+        - ignore_errors (bool):
+          Ignore errors when copying files. Default: True
+        # Not implemented, always copied:
+        # - mode ('copy' or 'forward'):
+        #   Either copy desired files to current directory, or just forward
+        #   them via setting '_files_prev' accordingly.
+        #   Default: 'forward'
     """
-
     _fw_name = "RecoverLammpsTask"
     required_params = []
-    optional_params = [ "recover", "restart", "restart_fw", "max_restarts",
-        "restart_file_glob_patterns", "default_restart_file",
-        "fizzle_on_no_restart_file", "repeated_recover_fw_name" ]
+    optional_params = [
+        "recover",
+        "restart",
+        "restart_fw",
+        #"addition_wf",
+        "max_restarts",
+        "restart_file_glob_patterns"
+        "other_glob_patterns",
+        "default_restart_file",
+        "fizzle_on_no_restart_file",
+        "repeated_recover_fw_name",
+        "mode" ]
 
     def run_task(self, fw_spec):
         from os import path, curdir, getcwd
 
         recover                    = self.get('recover', True)
         restart_fw_dict            = self.get('restart_fw', None)
+        detour_fw_dict             = self.get('detour_fw', None)
+        #addition_wf_dict           = self.get('addition_wf', None)
         max_restarts               = self.get('max_restarts', 5)
         repeated_recover_fw_name   = self.get('repeated_recover_fw_name',
             'Repeated LAMMPS recovery')
-
         restart_file_glob_patterns = self.get('restart_file_glob_patterns', ['*.restart[0-9]'] )
         default_restart_file       = self.get('default_restart_file', 'default.mpiio.restart')
-        # other_glob_patterns        = self.get('other_glob_patterns', ['*.nc'] )
-        # dest                       = self.get('dest', None)
-        # file_transfer_mode         = self.get('file_transfer_mode', 'move')
+        other_glob_patterns        = self.get('other_glob_patterns', None )
         fizzle_on_no_restart_file  = self.get('fizzle_on_no_restart_file', True)
+        ignore_errors              = self.get('ignore_errors', True)
+        # mode                       = self.get('mode', 'forward')
 
         # check whether a previous firework handed down information
         prev_job_info = None
@@ -471,12 +517,40 @@ class RecoverLammpsTask(FiretaskBase):
             print('The location of fizzled parent Firework was: {}'.format(path_prefix))
         elif recover: # no info about previous (fizzled or other) jobs given
             print('No information about previous (fizzled or other) jobs available.')
-            print('Nothing to be done. Exiting successfully.')
-            return FWAction()
+            # completed successfully?
+            # return FWAction()
         else:
             path_prefix = getcwd() # assume all output files in current directory
             print('Work on own launch dir.')
+        # only recover, if prev_job info not None
 
+        # find other files to forward:
+        file_list = []
+        if type(other_glob_patterns) is not list:
+            other_glob_patterns = [ other_glob_patterns ]
+        for other_glob_pattern in other_glob_patterns:
+            print("Processing glob pattern {}".format(glob_pattern))
+            file_list.extend(
+                glob.glob( path.join( path_prefix, other_glob_pattern )  )
+            )
+
+        # copy other files if necessary
+        if len(file_list > 0):
+            for f in file_list:
+                print("File {} will be forwarded.".format(f))
+                try:
+                    dest = os.getcwd()
+                    shutil.copy(f,dest)
+                except:
+                    traceback.print_exc()
+                    if not ignore_errors:
+                        raise ValueError("There was an error "
+                            "copying '{}' to '{}'.".format(f, dest))
+                    else:
+                        print("There was an error "
+                            "copying '{}' to '{}', ignored.".format(f, dest))
+
+        # find restart files:
         restart_file_list = []
         # avoid iterating through each character of string
         if type(restart_file_glob_patterns) is not list:
@@ -486,6 +560,7 @@ class RecoverLammpsTask(FiretaskBase):
                 glob.glob( path.join( path_prefix, restart_file_glob_pattern ) )
             )
 
+        # determine most recent of all restart files:
         if len(restart_file_list) > 1:
             sorted_restart_file_list = sorted(
                 restart_file_list, key = path.getmtime) # sort by modification time
@@ -500,15 +575,53 @@ class RecoverLammpsTask(FiretaskBase):
             if fizzle_on_no_restart_file:
                  raise ValueError("No restart file in {:s}".format(path_prefix))
 
-        detour_wf = None
+        detour_wf = None # everything goes into detour workflow for now
         addition_wf = None
 
-        if current_restart_file is not None:
-            detour_fws = []
-            detour_fws_links = {}
+        detour_fws = []
+        detour_fws_links = {}
 
+        # if detour_fw given, append in any case:
+        consecutive_fw_id = -1 # quite an ugly necessity
+        if detour_fw_dict:
+            # append firework (defined as dict):
+            detour_fw = Firework.from_dict(detour_fw_dict)
+            detour_fw.fw_id = consecutive_fw_id
+            consecutive_fw_id = consecutive_fw_id - 1
+            # manually set _files_prev:
+            # detour_fw.spec["_files_prev"] = update_spec["_files_prev"]
+
+            # check whether this Firework's _files_out can serve subsequent
+            # Firework's _files_in:
+            files_prev = {}
+            if "_files_out" in fw_spec and fw_spec["_files_out"] is dict \
+                and "_files_in" in detour_fw.spec \
+                and detour_fw.spec["_files_in"] is dict:
+
+                # find overlap between current fw's outfiles and detour fw's
+                # infiles:
+                files_io_overlap = fw_spec["_files_out"].keys() \
+                    & detour_fw.spec["_files_in"].keys()
+
+                for k in files_io_overlap:
+                    files = glob.glob(os.path.join(curdir,
+                        fw_spec["_files_out"][k]))
+                    if files:
+                        files_prev[k] = os.path.abspath(sorted(files)[-1])
+                        print("This Firework provides {}: {}".format(
+                            k, fw_spec["_files_out"][k] ), " for subsequent "
+                            "detour Firework.")
+
+            detour_fw.spec["_files_prev"] = files_prev
+            print("Create detour Firework {} with id {} and specs {}".format(
+                    detour_fw.name, detour_fw.fw_id, detour_fw.spec) )
+            detour_fws.append(detour_fw)
+
+        # append restart fireworks if restart file exists:
+        if current_restart_file is not None and restart_fw_dict:
             current_restart_file_basename = path.basename(current_restart_file)
-            print("File {} will be forwarded.".format(current_restart_file_basename))
+            print("File {} will be forwarded.".format(
+                current_restart_file_basename))
 
             try:
                 shutil.copy(current_restart_file, default_restart_file)
@@ -523,79 +636,87 @@ class RecoverLammpsTask(FiretaskBase):
             # returning the raw FWAction object.
             # Possibly, update_spec or mod_spec is evaluated before
             # additions and detours are appended?
-            update_spec = {}
-            if fw_spec.get("_files_out"): # restart file forwarded ?
-                filepaths = {}
-                for k, v in fw_spec.get("_files_out").items():
-                    files = glob.glob(os.path.join(curdir, v))
+            files_prev = {}
+            if "_files_out" in fw_spec and fw_spec["_files_out"] is dict \
+                and "_files_in" in restart_fw.spec \
+                and restart_fw.spec["_files_in"] is dict:
+
+                # find overlap between current fw's outfiles and restart fw's
+                # infiles:
+                files_io_overlap = fw_spec["_files_out"].keys() \
+                    & restart_fw.spec["_files_in"].keys()
+
+                for k in files_io_overlap:
+                    files = glob.glob(os.path.join(curdir,
+                        fw_spec["_files_out"][k]))
                     if files:
-                        filepaths[k] = os.path.abspath(sorted(files)[-1])
-                update_spec["_files_prev"] = filepaths
-            elif "_files_prev" in fw_spec:
-                # This ensures that _files_prev are not passed from Firework to
-                # Firework. We do not want output files from fw1 to be used by fw3
-                # in the sequence of fw1->fw2->fw3
-                update_spec["_files_prev"] = {}
+                        files_prev[k] = os.path.abspath(sorted(files)[-1])
+                        print("This Firework provides {}: {}".format(
+                            k, fw_spec["_files_out"][k] ), " for subsequent "
+                            "restart Firework." )
 
-            # wished for LAMMPS restart
-            if restart_fw_dict:
-                # try to derive number of restart from fizzled parent
-                if prev_job_info and 'spec' in prev_job_info \
-                    and 'restart_count' in prev_job_info['spec']:
-                    restart_count = \
-                        int(prev_job_info['spec']['restart_count']) + 1
-                else:
-                    restart_count = 0
+            # try to derive number of restart from fizzled parent
+            if prev_job_info and 'spec' in prev_job_info \
+                and 'restart_count' in prev_job_info['spec']:
+                restart_count = \
+                    int(prev_job_info['spec']['restart_count']) + 1
+            else:
+                restart_count = 0
 
-                if restart_count < max_restarts:
-                    print("This is restart #{:d} of at most {:d} restarts.".format(
-                        restart_count+1, max_restarts ) )
+            if restart_count < max_restarts:
+                print("This is restart #{:d} of at most {:d} restarts.".format(
+                    restart_count+1, max_restarts ) )
 
-                    # append restart firework (defined as dict):
-                    restart_fw = Firework.from_dict(restart_fw_dict)
-                    restart_fw.fw_id = -1
-                    restart_fw.spec["restart_count"] = restart_count
-                    restart_fw.spec["_files_prev"] = update_spec["_files_prev"]
+                # append restart firework (defined as dict):
+                restart_fw = Firework.from_dict(restart_fw_dict)
+                restart_fw.fw_id = consecutive_fw_id
+                consecutive_fw_id = consecutive_fw_id - 1
+                restart_fw.spec["restart_count"] = restart_count
 
+                # manually set _files_prev:
+                restart_fw.spec["_files_prev"] = files_prev
 
+                print("Create restart Firework {} with id {} and specs {}".format(
+                    restart_fw.name, restart_fw.fw_id, restart_fw.spec) )
 
-                    print("Create restart Firework {} with id {} and specs {}".format(
-                        restart_fw.name, restart_fw.fw_id, restart_fw.spec) )
+                # repeatedly append copy of this recover task:
+                recover_ft = self
 
-                    # repeatedly append copy of this recover task:
-                    recover_ft = self
+                # repeated recovery firework inherits the following specs:
+                spec_to_pass = [ '_allow_fizzled_parents', '_category',
+                    '_files_in', '_files_out', '_tasks' ]
+                recover_fw_spec = { key: fw_spec[key] for key in spec_to_pass if key in fw_spec }
 
-                    # must be extended:
-                    spec_to_pass = [ '_allow_fizzled_parents', '_category',
-                        '_files_in', '_files_out', '_tasks' ]
-                    recover_fw_spec = { key: fw_spec[key] for key in spec_to_pass if key in fw_spec }
+                recover_fw = Firework(
+                    recover_ft,
+                    spec = recover_fw_spec, # inherit thi Firework's spec
+                    name = repeated_recover_fw_name,
+                    parents = [ restart_fw ], fw_id = consecutive_fw_id  )
+                    consecutive_fw_id = consecutive_fw_id - 1
+                print("Create repeated recover Firework {} with id {} and specs {}".format(
+                    recover_fw.name, recover_fw.fw_id, recover_fw.spec) )
 
-                    recover_fw = Firework(
-                        recover_ft,
-                        spec = recover_fw_spec, # inherit thi Firework's spec
-                        name = repeated_recover_fw_name,
-                        parents = [ restart_fw ], fw_id = -2  )
-                    print("Create repeated recover Firework {} with id {} and specs {}".format(
-                        recover_fw.name, recover_fw.fw_id, recover_fw.spec) )
+                detour_fws.append(restart_fw)
 
-                    detour_fws.append(restart_fw)
-                    detour_fws.append(recover_fw)
+                # make repeated recovery fireworks dependent on all other
+                # fireworks (i.e. detour and restart) in list:
+                detour_fws_links[restart_fw] = [fw.fw_id for fw in detour_fws]
 
-                    detour_fws_links[restart_fw] = [recover_fw]
+                detour_fws.append(recover_fw)
 
-                    print("Links in detour: {}".format(detour_fws_links) )
-
-                    detour_wf = Workflow( detour_fws, detour_fws_links )
-                else:
-                    print("Maximum number of {:d} restarts reached. ".format(
-                        restart_count+1, max_restarts ),  "No further restart.")
+                print("Links in detour: {}".format(detour_fws_links) )
+            else:
+                print("Maximum number of {:d} restarts reached. ".format(
+                    restart_count+1, max_restarts ),  "No further restart.")
         else:
              raise ValueError("No restart file (should never reach this point)")
 
+        # detour_fws can be empty:
+        if len(detour_fws) > 0:
+            detour_wf = Workflow( detour_fws, detour_fws_links )
         return FWAction(
             additions   = addition_wf, # dummy for now
-            detours     = detour_wf,  # will forward restart file if wished for
-            update_spec = update_spec ) # in order to provide restart file
+            detours     = detour_wf)  # will forward restart file if wished for
 
 class MakeSegIdSegPdbDictTask(FiretaskBase):
     """
@@ -646,7 +767,7 @@ class RecoverFilesFromFizzledParentTask(FiretaskBase):
           Default: False
         ignore_errors: bool (optional)
           Ignore errors when copying files. Default: True
-         shell_interpret: bool (optional)
+        shell_interpret: bool (optional)
           Expand environment variables and other placeholders in filenames.
           Default: True
     """
