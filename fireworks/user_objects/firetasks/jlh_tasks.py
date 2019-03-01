@@ -727,7 +727,7 @@ class RecoverLammpsTask(FiretaskBase):
                 print("Maximum number of {:d} restarts reached. ".format(
                     restart_count+1, max_restarts ),  "No further restart.")
         else:
-             raise ValueError("No restart file (should never reach this point)")
+             print("No restart file, no restart Fireworks appended.")
 
         # detour_fws can be empty:
         if len(detour_fws) > 0:
