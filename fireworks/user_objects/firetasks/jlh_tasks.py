@@ -526,6 +526,9 @@ class RecoverLammpsTask(FiretaskBase):
 
         # find other files to forward:
         file_list = []
+        current_restart_file = None
+        path_prefix = None
+
         if prev_job_info is not None:
             if type(other_glob_patterns) is not list:
                 other_glob_patterns = [ other_glob_patterns ]
