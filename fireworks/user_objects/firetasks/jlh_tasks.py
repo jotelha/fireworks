@@ -529,10 +529,11 @@ class RecoverLammpsTask(FiretaskBase):
         if type(other_glob_patterns) is not list:
             other_glob_patterns = [ other_glob_patterns ]
         for other_glob_pattern in other_glob_patterns:
-            print("Processing glob pattern {}".format(other_glob_pattern))
-            file_list.extend(
-                glob.glob( path.join( path_prefix, other_glob_pattern )  )
-            )
+            if type(restart_file_glob_pattern) is str: # avoid non string objs
+                print("Processing glob pattern {}".format(other_glob_pattern))
+                file_list.extend(
+                    glob.glob( path.join( path_prefix, other_glob_pattern )  )
+                )
 
         # copy other files if necessary
         if len(file_list) > 0:
@@ -556,9 +557,10 @@ class RecoverLammpsTask(FiretaskBase):
         if type(restart_file_glob_patterns) is not list:
             restart_file_glob_patterns = [ restart_file_glob_patterns ]
         for restart_file_glob_pattern in restart_file_glob_patterns:
-            restart_file_list.extend(
-                glob.glob( path.join( path_prefix, restart_file_glob_pattern ) )
-            )
+            if type(restart_file_glob_pattern) is str: # avoid non string objs
+                restart_file_list.extend(
+                    glob.glob( path.join( path_prefix, restart_file_glob_pattern ) )
+                )
 
         # determine most recent of all restart files:
         if len(restart_file_list) > 1:
