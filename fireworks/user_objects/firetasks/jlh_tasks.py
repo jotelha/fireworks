@@ -529,7 +529,7 @@ class RecoverLammpsTask(FiretaskBase):
         if type(other_glob_patterns) is not list:
             other_glob_patterns = [ other_glob_patterns ]
         for other_glob_pattern in other_glob_patterns:
-            if type(restart_file_glob_pattern) is str: # avoid non string objs
+            if type(other_glob_pattern) is str: # avoid non string objs
                 print("Processing glob pattern {}".format(other_glob_pattern))
                 file_list.extend(
                     glob.glob( path.join( path_prefix, other_glob_pattern )  )
