@@ -501,6 +501,7 @@ class RecoverLammpsTask(FiretaskBase):
 
         # check whether a previous firework handed down information
         prev_job_info = None
+        path_prefix = None
         if recover and ('_job_info' in fw_spec): # pull from intentionally passed job info
             job_info_array = fw_spec['_job_info']
             prev_job_info = job_info_array[-1]
@@ -527,7 +528,6 @@ class RecoverLammpsTask(FiretaskBase):
         # find other files to forward:
         file_list = []
         current_restart_file = None
-        path_prefix = None
 
         if prev_job_info is not None:
             if type(other_glob_patterns) is not list:
