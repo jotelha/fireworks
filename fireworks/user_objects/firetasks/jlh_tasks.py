@@ -501,6 +501,7 @@ class RecoverLammpsTask(FiretaskBase):
 
         # check whether a previous firework handed down information
         prev_job_info = None
+        path_prefix = None
         if recover and ('_job_info' in fw_spec): # pull from intentionally passed job info
             job_info_array = fw_spec['_job_info']
             prev_job_info = job_info_array[-1]
@@ -526,56 +527,59 @@ class RecoverLammpsTask(FiretaskBase):
 
         # find other files to forward:
         file_list = []
-        if type(other_glob_patterns) is not list:
-            other_glob_patterns = [ other_glob_patterns ]
-        for other_glob_pattern in other_glob_patterns:
-            if type(other_glob_pattern) is str: # avoid non string objs
-                print("Processing glob pattern {}".format(other_glob_pattern))
-                file_list.extend(
-                    glob.glob( path.join( path_prefix, other_glob_pattern )  )
-                )
+        current_restart_file = None
 
-        # copy other files if necessary
-        if len(file_list) > 0:
-            for f in file_list:
-                print("File {} will be forwarded.".format(f))
-                try:
-                    dest = os.getcwd()
-                    shutil.copy(f,dest)
-                except:
-                    traceback.print_exc()
-                    if not ignore_errors:
-                        raise ValueError("There was an error "
-                            "copying '{}' to '{}'.".format(f, dest))
-                    else:
-                        print("There was an error "
-                            "copying '{}' to '{}', ignored.".format(f, dest))
+        if prev_job_info is not None:
+            if type(other_glob_patterns) is not list:
+                other_glob_patterns = [ other_glob_patterns ]
+            for other_glob_pattern in other_glob_patterns:
+                if type(other_glob_pattern) is str: # avoid non string objs
+                    print("Processing glob pattern {}".format(other_glob_pattern))
+                    file_list.extend(
+                        glob.glob( path.join( path_prefix, other_glob_pattern )  )
+                    )
 
-        # find restart files:
-        restart_file_list = []
-        # avoid iterating through each character of string
-        if type(restart_file_glob_patterns) is not list:
-            restart_file_glob_patterns = [ restart_file_glob_patterns ]
-        for restart_file_glob_pattern in restart_file_glob_patterns:
-            if type(restart_file_glob_pattern) is str: # avoid non string objs
-                restart_file_list.extend(
-                    glob.glob( path.join( path_prefix, restart_file_glob_pattern ) )
-                )
+            # copy other files if necessary
+            if len(file_list) > 0:
+                for f in file_list:
+                    print("File {} will be forwarded.".format(f))
+                    try:
+                        dest = os.getcwd()
+                        shutil.copy(f,dest)
+                    except:
+                        traceback.print_exc()
+                        if not ignore_errors:
+                            raise ValueError("There was an error "
+                                "copying '{}' to '{}'.".format(f, dest))
+                        else:
+                            print("There was an error "
+                                "copying '{}' to '{}', ignored.".format(f, dest))
+
+            # find restart files:
+            restart_file_list = []
+            # avoid iterating through each character of string
+            if type(restart_file_glob_patterns) is not list:
+                restart_file_glob_patterns = [ restart_file_glob_patterns ]
+            for restart_file_glob_pattern in restart_file_glob_patterns:
+                if type(restart_file_glob_pattern) is str: # avoid non string objs
+                    restart_file_list.extend(
+                        glob.glob( path.join( path_prefix, restart_file_glob_pattern ) )
+                    )
 
         # determine most recent of all restart files:
-        if len(restart_file_list) > 1:
-            sorted_restart_file_list = sorted(
-                restart_file_list, key = path.getmtime) # sort by modification time
-            print("Several restart files: {} (most recent last)".format(sorted_restart_file_list))
-            current_restart_file = sorted_restart_file_list[-1]
-        elif len(restart_file_list) == 1:
-            print("One restart file: {}".format(restart_file_list[0]))
-            current_restart_file = restart_file_list[-1]
-        else:
-            print("No restart file!")
-            current_restart_file = None
-            if fizzle_on_no_restart_file:
-                 raise ValueError("No restart file in {:s}".format(path_prefix))
+            if len(restart_file_list) > 1:
+                sorted_restart_file_list = sorted(
+                    restart_file_list, key = path.getmtime) # sort by modification time
+                print("Several restart files: {} (most recent last)".format(sorted_restart_file_list))
+                current_restart_file = sorted_restart_file_list[-1]
+            elif len(restart_file_list) == 1:
+                print("One restart file: {}".format(restart_file_list[0]))
+                current_restart_file = restart_file_list[-1]
+            else:
+                print("No restart file!")
+                current_restart_file = None
+                if fizzle_on_no_restart_file:
+                     raise ValueError("No restart file in {:s}".format(path_prefix))
 
         detour_wf = None # everything goes into detour workflow for now
         addition_wf = None
@@ -723,7 +727,7 @@ class RecoverLammpsTask(FiretaskBase):
                 print("Maximum number of {:d} restarts reached. ".format(
                     restart_count+1, max_restarts ),  "No further restart.")
         else:
-             raise ValueError("No restart file (should never reach this point)")
+             print("No restart file, no restart Fireworks appended.")
 
         # detour_fws can be empty:
         if len(detour_fws) > 0:
