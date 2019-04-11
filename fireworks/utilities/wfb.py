@@ -1,0 +1,494 @@
+""" Workflow Builder, facilitates workflow constructionm """
+
+__author__ = 'Johannes Hörmann'
+__email__ = 'johannes.hoermann@imtek.uni-freiburg.de'
+__copyright__ = 'Copyright 2019, University of Freiburg'
+
+import logging, igraph, itertools
+import numpy as np
+from collections.abc import Iterable
+
+class WorkflowBuilder:
+    std_context         = {}
+    persistent_contexts = {}
+    transient_contexts  = {}
+    dependencies        = {}
+    
+    g = igraph.Graph(directed=True)
+    h = igraph.Graph(directed=True)
+    
+    t = None # degenerate tree
+    
+    topological_order = None
+    
+    root = None
+    
+    logger = None
+    
+    # plot settings
+    plt_layout = None
+    plt_label_font_size = 10
+    plt_bbox = (800, 600)
+    plt_margin = 100
+    
+    @property
+    def topological_order(self):
+        return list(reversed(self.postorder()))
+    
+    @property
+    def topological_position(self):
+        """A list assigning its position in a topological ordering to a vertex"""
+        return { v: i for i, v in enumerate(self.topological_order) }
+    
+    @property
+    def maximum_distance(self):
+        """A list assigning the largest possible path length from root to vertex"""
+        return [(-1)*int(d) for d in self.g.shortest_paths(self.root, weights=-np.ones(len(self.g.es)))[0] ]
+    
+    @property
+    def names(self):
+        """Returns list of vertex names for list of indices"""
+        return self.g.vs["name"]
+    
+    def positive_fw_id_generator(self):
+        i = 0
+        while True:
+            yield 10*(i+1)
+            i = i +1
+    
+    def __init__(self, system_file = None, loglevel = None):
+        self.logger = logging.getLogger(__name__)
+        if loglevel is not None:
+            self.logger.setLevel(loglevel)
+        if system_file is not None:
+            self.read_system_file(system_file)
+            self.build_graph()
+            
+    def read_system_file(self, system_file):
+        assert type(system_file) is str
+    
+        with open(system_file) as stream:
+            system = yaml.safe_load(stream)
+
+        logger.info("File '{:s} contains the sections {}.".format( system_file, list(system.keys())) )
+        
+        self.std_context = system['std']
+        self.persistent_contexts = system['persistent']
+        self.transient_contexts = system['transient']
+        self.dependencies = system['dependencies']
+        
+    def build_graph(self):
+        fws_set = set()
+        for k,vv in self.dependencies.items():
+            v = [ list(v.keys())[0] if type(v) is dict else v for v in vv ]
+            fws_set.update([k,*v])
+            
+        self.g = igraph.Graph(directed=True)
+        self.g.add_vertices(sorted(list(fws_set)))
+        logger.info("Graph contains {:d} nodes: {}.".format( len(self.g.vs), self.g.vs["name"] ) )
+
+        #edges = [ (parent, child) for parent, children in self.dependencies.items() for child in children ]
+        for parent, children in self.dependencies.items():
+            for child in children:
+                if type(child) is dict:
+                    edge_type = list(child.values())[0] # expect only one entry
+                    child     = list(child.keys())[0] 
+                else:
+                    edge_type = 0 # default
+                self.g.add_edge(parent,child,type=edge_type)        
+        logger.info("Graph contains {:d} edges: {}.".format( len(self.g.es),
+            [ (self.g.vs[ self.g.es[e].source ]["name"], self.g.vs[ self.g.es[e].target ]["name"] ) for e in self.g.es.indices ] ) )
+        
+        if not self.g.is_dag():
+            logger.exception("Graph is not DAG!")
+            raise ValueError
+            
+        root = np.where(np.equal(self.g.degree(mode=igraph.IN),0))[0]
+        if len(root) == 0:
+            logger.exception("Graph has no root!")
+            raise ValueError
+        elif len(root) > 1:
+            logger.exception("Graph root not unique: {}!".format( [ self.ge.vs[v]["name"] for v in root ]))
+            raise ValueError
+        
+        self.root = int(root[0])
+        logger.info("Identified root {}.".format( self.g.vs[self.root]["name"] ) )
+        
+        #self.topological_order = list(reversed(self.postorder()))
+        
+        self.g.vs["order"] = self.topological_order
+        self.g.vs["dist"] = self.maximum_distance
+        
+        #self.g.vs["instance"] = [[]]*len(self.g.vs)   # list of instances
+        self.g.vs["persistent"] = [[{}]]*len(self.g.vs) # list of persistent contexts
+        self.g.vs["transient"] = [[{}]]*len(self.g.vs)  # list of transient contextes 
+        for v in self.g.vs:
+            if v["name"] in self.persistent_contexts:
+                v["persistent"] = self.persistent_contexts[ v["name"] ]
+            if v["name"] in self.transient_contexts:
+                v["transient"] = self.transient_contexts[ v["name"] ]
+                
+        #self.g.vs["persistent"] = [[]]*len(self.g.vs) # list of persistent contexts
+        #self.g.vs["transient"] = [[]]*len(self.g.vs)  # list of transient contextes 
+        
+                # for plotting purposes:
+        # self.plt_layout = self.g.layout_auto() 
+        try:
+            #self.plt_layout = self.g.layout_reingold_tilford(mode="out", root=[self.root]) # tree-like
+            self.g.layout_fruchterman_reingold() # better than Kamanda-Kawai
+        except:
+            #self.plt_layout = self.g.layout_kamada_kawai()
+            self.plt_layout = self.g.layout_sugiyama()
+            
+        #self.plt_layout = self.g.layout_reingold_tilford_circular(mode="out", root=self.root, rootlevel=0 )
+        #self.plt_layout = self.g.layout_fruchterman_reingold( )
+        self.g.vs["label"] = self.g.vs["name"]
+        self.g.vs["label_size"] = self.plt_label_font_size
+        
+    def subgraph_at(self, v, x=set()):
+        """Returns indices of all vertices in the subgraph beginning at node v, not following any edges leading to vertices in x"""
+        if not isinstance(x, Iterable):
+            x = set([x])
+            
+        visited = set()
+        def dfs(v):
+            visited.add(v)
+            for child in self.g.neighbors(v,mode=igraph.OUT):
+                if (child not in x) and (child not in visited):
+                    dfs(child)
+        dfs(v)
+        return visited
+    
+    def subgraphs_below(self, v):
+        """Returns list of list of indices of all vertices in the subgraphs beginning below node v"""
+        forks = {}
+        for eid in self.g.incident(v,mode=igraph.OUT):
+            e = self.g.es[eid]
+            s = self.subgraph_at(e.target)
+            if e["type"] in forks:
+                forks[ e["type"] ].update(s)
+            else:
+                forks[ e["type"] ] = set(s)
+            
+        return list(forks.values())
+    
+    def subgraph_except(self, x):
+        """Returns indices of all vertices in the subgraph not following any path to any vertex in x"""
+        visited = set()
+        def dfs(v):
+            visited.add(v)
+            for child in self.g.neighbors(v,mode=igraph.OUT):
+                if (child is not x) and (child not in visited):
+                    dfs(child)
+        dfs(self.root)
+        return visited
+        
+        # visited has now all vertices of subgraph
+        logger.info("Selected subgraph with nodes: {}.".format( internal ) )
+        
+    def duplicate_subset(self,sub,env,suffix='*'):
+        """Duplicates subset within environment"""
+        adjacent = set()
+        
+        def new_name(v):
+            return (self.g.vs[v]["name"]+str(suffix))
+        
+        def duplicate_vertex(v):
+            nam = new_name(v)
+            self.h.add_vertex( nam )
+            w = self.h.vs.find(name=nam).index
+            logger.info("Added vertex {:d} - {:s}".format( w, nam ) )
+            for attribute in self.g.vs.attribute_names():
+                if attribute is not "name":
+                    self.h.vs[w][attribute] = self.g.vs[v][attribute]
+            self.h.vs[w]["label"] = self.h.vs[w]["name"]
+            return w
+        
+        def duplicate_edge(e,s,t):
+            self.h.add_edge(s,t)
+            f = self.h.get_eid(s,t)
+            logger.info("Added edge {:d} - ({:d}-{:d})".format( f, s, t ) )
+            for attribute in self.g.es.attribute_names():
+                self.h.es[f][attribute] = self.g.es[e][attribute]
+            return f
+        
+        def edges_adjecent_to_subset(s):
+            edges = set()
+            for v in s:
+                edges.update( self.g.incident(v,mode=igraph.ALL) )
+            return edges
+        
+        dup = [ duplicate_vertex(v) for v in sub ]
+        sub_to_dup = { s: d for s,d in zip(sub,dup) }
+        
+        edges = edges_adjecent_to_subset(sub)
+        
+        for e in edges:
+            (source,target) = self.g.es[e].tuple
+            
+            if (source in sub) and (target in sub):
+                duplicate_edge(e,sub_to_dup[source],sub_to_dup[target])
+            elif (source in sub) and (target in env):
+                duplicate_edge(e,sub_to_dup[source],target)
+                #h.delete_edges(e)
+            elif (source in env) and (target in sub):        
+                duplicate_edge(e,source,sub_to_dup[target])
+                    
+        return
+    
+    def descend(self):
+        """Descends the graph in topological order and creates forks where demanded
+        
+        Currently only supports bifurcations"""
+        
+        self.g.vs["visited"] = False
+        
+        # the topological order might change as new vertices are added during descend
+        # introduced marker "visited" for this purpose
+        suffix=''
+        while True:    
+            vs = self.topological_order     
+            logger.info("Current topological order: {}".format( vs ) )
+
+            for v in vs:
+                #v = self.topological_order[i]
+                if self.g.vs[v]["visited"] is True:
+                    logger.info("{:d}: {} has been visited before, move on.".format(v, self.g.vs[v]["name"] ) )
+                    continue
+                    
+                logger.info("{:d}: {}.".format(v, self.g.vs[v]["name"] ) )
+
+
+                self.g.vs[v]["visited"] = True
+                #get all forks if vertex marked accordingly
+                forks = self.subgraphs_below(v)  
+                
+                # so far only supports bifurcation
+                if len(forks) > 1:
+                    logger.info("{:d} forks at v: {}.".format( len(forks), forks ) )
+
+                    fl = forks.pop()
+                    self.h = self.g.copy()
+                    # TODO: implement support for > 2 fork
+                    # use first fork as reference
+                    # process forks pairwise:
+
+                    fr = forks.pop()
+
+                    logger.info("Lef and right fork: {}.".format( fl, fr ) )
+                    overlap = fl & fr
+                    logger.info("Overlap: {}.".format( overlap ) )
+
+
+                    #env = set(self.topological_order) # a set of all nodes
+                    env = set(self.subgraph_at(self.root)) # a set of all nodes
+                    logger.info("Current set of vertices: {}.".format( env ) )
+                    
+                    suffix = suffix + '*'
+
+                    lenv = (env - fr ) | fl
+                    logger.info("Environment of left fork: {}.".format( lenv ) )
+                    self.duplicate_subset(overlap,lenv,suffix)
+
+                    suffix = suffix + '*'
+
+                    renv = (env - fl ) | fr
+                    logger.info("Environment of right fork: {}.".format( lenv ) )
+
+                    self.duplicate_subset(overlap,renv,suffix)
+
+                    #to_delete.update(overlap)
+                    self.h.delete_vertices(overlap)
+                    self.g = self.h
+                    
+                    # go up one level to while loop and rebuild topological order
+                    # after modification of graph
+                    logger.info("Forked and modified graph at node {}, rebuilding topological order.".format( v ) )
+                    break    
+            else: # only if inner loop did not break:
+                logger.info("All processed at node {}, finished.".format( v ) )
+                break # all vertices v have been visited, also in extended graph
+            logger.info("Completed processing node {}, descending.".format( v ) )
+        return    
+            
+    def maximum_spanning_tree(self):
+        """Constructs maximum spanning tree by negation of weights"""
+        #minimum_spanning_tree = self.g.spanning_tree()
+        negated_weights = -np.ones(len(self.g.es))
+        return self.g.spanning_tree(weights=negated_weights)
+    
+    def bfs(self):
+        return self.g.bfs(self.root, mode = igraph.OUT)
+        
+    def bfs_advanced(self):
+        bfs = self.g.bfsiter(self.root, mode = igraph.OUT, advanced = True)
+        for (v, depth, p) in bfs:
+            if p is not None:
+                logger.info("{:03d}: {:s} - depth {:0d},  {:03d}: {:s}".format(v.index, v["name"], depth, p.index, p["name"] ))
+            else:
+                logger.info("{:03d}: {:s} - depth {:0d}, no ".format(v.index, v["name"], depth))
+                
+    def tree(self):
+        """Yields tree with possibly degenerate vertices"""
+        t, m = self.g.unfold_tree(self.root, mode=igraph.OUT)
+        for v in t.vs:
+            v["name"] = self.g.vs[ m[v.index] ]["name"]
+        t.vs["label"] = t.vs["name"]
+        t.vs["label_size"] = self.plt_label_font_size
+        self.t = t
+        return t
+    
+    def postorder(self):
+        """Visit all vertices in post-order beginning at root"""
+        visited = set()
+        order = []
+        def dfs(v):
+            visited.add(v)
+            for child in self.g.neighbors(v,mode=igraph.OUT):
+                if child not in visited:
+                    dfs(child)
+            order.append(v)
+        dfs(self.root)
+        return order
+    
+    def select_closest_parent(self, v):
+        """Returns parent closest above v, i.e. farthest from root"""
+        parents = self.g.neighbors(v,mode=igraph.IN)
+        selected_parent = None
+        if len(parents) > 0:
+            parent_distances = [ self.maximum_distance[p] for p in parents ]
+
+            logger.info("{:d}: {:s}, dist. {:d}, top.pos. {:d} has {:d} parents with distances {}:".format(
+                v, self.g.vs[v]["name"], self.g.vs[v]["dist"], self.g.vs[v]["order"], len(parents), parent_distances))
+            for p in parents:
+                logger.info("  {:d}: {:s}, dist. {:d}, top. pos. {:d}".format(
+                    p, self.g.vs[p]["name"], self.g.vs[p]["dist"], self.g.vs[p]["order"]))
+
+            # select indices of closest parents
+            closest_parents = [ parents[p] for p in np.where( np.equal( np.max(parent_distances), parent_distances ) )[0] ]
+
+            logger.info("    Maximum distance {:d} at parent {}".format(np.max(parent_distances),closest_parents) )
+
+            if len(closest_parents) > 1:
+                logger.warn("  {:d} parents are equally closest to child: Choice of context not unique.".format(len(closest_parents)))
+                for p in closest_parents:
+                    logger.warn("    {:d}: {:s}, dist. {:d}, top. pos. {:d}".format(
+                        p, self.g.vs[p]["name"], self.g.vs[p]["dist"], self.g.vs[p]["order"]))
+                logger.warn("  Choice of context not unique.")
+
+            selected_parent = closest_parents[0]
+            logger.info("  {:d}: {:s}, dist. {:d}, top. pos. {:d} selected as immediate parent".format(
+                selected_parent, self.g.vs[selected_parent]["name"], self.g.vs[selected_parent]["dist"], self.g.vs[selected_parent]["order"]))
+        else:
+            logger.info("{:d}: {:s}, dist. {:d}, top.pos. {:d} has no parents.".format(v, self.g.vs[v]["name"], self.g.vs[v]["dist"], self.g.vs[v]["order"]))
+        return selected_parent
+
+    def build_degenerate_graph(self):
+        # traverse in topological order to assure all parents have been processed before their children
+        fwId = self.positive_fw_id_generator()
+        
+        h = igraph.Graph(directed=True)
+        
+        for v in self.topological_order:
+            logger.info("Iterating node {:d}: {:s}".format(v, self.g.vs[v]["name"] ))
+
+            fw_class_name = self.g.vs[v]["name"]
+            if fw_class_name not in env.list_templates():
+                    raise ValueError("No template '{:s}' exists!".format(fw_class_name))
+            # logger.warn("{}{}:".format(' '*depth, ))             
+
+            # degeneracy = degeneracy*len(persistent_context_updates)*len(transient_context_updates)
+
+            # children = g.neighbors(v,mode=igraph.OUT)
+            
+            # select  with largest distance to root as immediate predecessor
+            # this is not well defined for parents on the same level
+            # parents = self.g.neighbors(v,mode=igraph.IN)
+            
+            selected_parent = self.select_closest_parent(v)
+            if selected_parent is not None:
+                parent_instances = h.vs.select(instanceOf=selected_parent)    
+                parent_contexts = parent_instances["persistent"] # inherit context
+                parent_names = parent_instances["name"]
+            else:
+                parent_contexts = [ self.std_context ]
+                parent_names = [ None ]
+            
+
+            persistent_context_updates = self.g.vs[v]["persistent"]
+            transient_context_updates = self.g.vs[v]["transient"]
+            
+            logger.info("Degenracy (persistent*transient): {:d}*{:d} = {:d}".format(
+                len(persistent_context_updates),len(transient_context_updates),len(persistent_context_updates)*len(transient_context_updates)))
+
+            logger.debug("  Parent names: {}".format(parent_names))
+            logger.debug("  Parent contexts: {}".format(parent_contexts))
+            logger.debug("  Child persistent context updates {}".format(persistent_context_updates))
+            logger.debug("  Child transient context updates {}".format(transient_context_updates))
+            # take all  instances and first apply ...
+            
+            # return zip(parent_names, parent_contexts)
+            for (parent_name, parent_context) in zip(parent_names, parent_contexts):
+                
+                logger.info("  Iterating parent {}:".format(parent_name))
+                
+                for i, persistent_context_update in enumerate(persistent_context_updates):
+                    logger.info("    Iterating persitent content update {:d}:".format(i))
+                    # ... persitent changes ...
+                    persistent_context = parent_context.copy()
+                    persistent_context.update( persistent_context_update )
+                    
+                    logger.debug("      Current persistent context: {}".format(persistent_context))
+
+                    
+                    for j, transient_context_update in enumerate(transient_context_updates):
+                        logger.info("      Iterating transient content update {:d}:".format(j))
+                        # then apply transient changes ...
+                        transient_context = persistent_context.copy()
+                        transient_context.update( transient_context_update )
+                        
+                        logger.debug("        Current transient context: {}".format(transient_context))
+                        
+                        fw_id = next(fwId) # get unique id
+                        
+                        child_name = "{:s}_{:04d}".format(fw_class_name,fw_id)
+                        h.add_vertex(
+                            child_name, 
+                            instanceOf=v, 
+                            fw_id=fw_id, 
+                            persistent=persistent_context, 
+                            transient=transient_context)
+                        child_id = h.vs.find(name=child_name).index
+                        
+                        logger.info("          Instance {:d} - {:d} - {:s} of class {:d} - {:s} created.".format(
+                            child_id, 
+                            fw_id, 
+                            child_name,
+                            h.vs[child_id]["instanceOf"], 
+                            self.g.vs[ h.vs[child_id]["instanceOf"] ]["name"] ) )
+                        
+                        if parent_name is not None:
+                            h.add_edge(parent_name, child_name)
+                            parent_id = h.vs.find(name=parent_name).index
+                            logger.info("          Attached to instance {:d} - {:d} - {:s} of class {:d}: {:s}.".format(
+                                parent_id, 
+                                h.vs[parent_id]["fw_id"], 
+                                h.vs[parent_id]["name"], 
+                                h.vs[parent_id]["instanceOf"], 
+                                self.g.vs[ h.vs[parent_id]["instanceOf"] ]["name"]))
+                        
+                        # TODO: attach remaining parents
+                        logger.info("      Completed transient content update {:d}:".format(j))
+                    logger.info("    Completed persitent content update {:d}:".format(i))
+                logger.info("  Completed parent {}:".format(parent_name))
+            logger.info("Completed node {:d}: {:s}".format(v, self.g.vs[v]["name"] ))
+            #break
+            
+        h.vs["label"] = h.vs["name"]
+        h.vs["label_size"] = self.plt_label_font_size
+        return h
+        
+    def plot(self, g = None):
+        if g is None: 
+            g = self.g
+        return igraph.plot(g, layout = self.plt_layout, bbox = self.plt_bbox, margin = self.plt_margin)
