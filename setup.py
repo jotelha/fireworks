@@ -27,7 +27,7 @@ if __name__ == "__main__":
         packages=find_packages(),
         package_data={'fireworks.user_objects.queue_adapters': ['*.txt'], 'fireworks.user_objects.firetasks': ['templates/*.txt', 'templates/*.template'],
                       'fireworks.flask_site': ['static/images/*', 'static/css/*', 'static/js/*', 'templates/*'],
-                      'fireworks.flask_site.static.font-awesome-4.0.3': ['css/*', 'fonts/*', 'less/*', 'scss/*']},
+                      'fireworks.flask_site.static.font-awesome-4.0.3': ['css/*', 'fonts/*', 'less/*', 'scss/*'] },
         zip_safe=False,
         install_requires=['ruamel.yaml>=0.15.35', 'pymongo>=3.3.0', 'Jinja2>=2.8.0',
                           'six>=1.10.0', 'monty>=1.0.1',
