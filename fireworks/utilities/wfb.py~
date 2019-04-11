@@ -28,21 +28,21 @@ class WorkflowBuilder:
 
     template_dir = 'templates'
     build_dir = 'build'
-
+    
     g = igraph.Graph(directed=True)
     h = igraph.Graph(directed=True)
-
+    
     t = None # degenerate tree
-
+    
     topological_order = None
-
+    
     root = None
 
     #  template engine
     env = None
-
+    
     logger = None
-
+    
     # plot settings
     plt_layout = None
     plt_label_font_size = 10
@@ -149,29 +149,22 @@ class WorkflowBuilder:
         fws_set = set()
         for k,v in dependencies.items():
             fws_set.update([k,*v])
-        self.logger.info("Set of Fireworks:{}.".format( sorted(fws_set) ) )
+        self.logger.info("Set of Fireworks:{}.".format( fws_set ) )
 
-        fws_id = { fw: (-10*(i+1)) for i, fw in enumerate( sorted(fws_set) ) }
-
+        fws_id = { fw: (-10*(i+1)) for i, fw in enumerate(fws_set) }
         fws_dict = {}
-        for fw in sorted(fws_set):
+        for fw in fws_set:
             self.logger.info("Loading files '{}'.".format( fw ) )
             fws_dict[fw] = Firework.from_file(os.path.join(
                 self.build_dir, fw), f_format='yaml')
 
         for name, fw in fws_dict.items():
             fw.fw_id = fws_id[name]
-            self.logger.info("fw_id {: 4d}: {:s}".format(fw.fw_id, name))
+            self.logger.info("{: 4d}: {:s}".format(fw_id, name))
 
         fws_list = list(fws_dict.values())
-
-        links = {
-            fws_dict[parent]: [
-                fws_dict[child] for child in children ] for parent, children in dependencies.items() }
-
         wf = Workflow( fws_list, links, name=wf_name, metadata=metadata )
         wf.to_file(os.path.join(self.build_dir,outfile),f_format="yaml")
-
         return wf
 
 
