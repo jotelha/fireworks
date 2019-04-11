@@ -234,7 +234,7 @@ class WorkflowBuilder:
         self.logger.info("Selected subgraph with nodes: {}.".format( internal ) )
         
     def duplicate_subset(self,sub,env,suffix='*'):
-        """Duplicates subset within environment"""
+        """Duplicates subset within environment and returns old vid -> new vid dict mapping"""
         adjacent = set()
         
         def new_name(v):
@@ -277,11 +277,10 @@ class WorkflowBuilder:
                 duplicate_edge(e,sub_to_dup[source],sub_to_dup[target])
             elif (source in sub) and (target in env):
                 duplicate_edge(e,sub_to_dup[source],target)
-                #h.delete_edges(e)
             elif (source in env) and (target in sub):        
                 duplicate_edge(e,source,sub_to_dup[target])
                     
-        return
+        return sub_to_dup
     
     def descend(self):
         """Descends the graph in topological order and creates forks where demanded
@@ -293,8 +292,8 @@ class WorkflowBuilder:
         # the topological order might change as new vertices are added during descend
         # introduced marker "visited" for this purpose
         suffix=''
-        while True:    
-            vs = self.topological_order     
+        while True:
+            vs = self.topological_order
             self.logger.info("Current topological order: {}".format( vs ) )
 
             for v in vs:
@@ -302,14 +301,14 @@ class WorkflowBuilder:
                 if self.g.vs[v]["visited"] is True:
                     self.logger.info("{:d}: {} has been visited before, move on.".format(v, self.g.vs[v]["name"] ) )
                     continue
-                    
+
                 self.logger.info("{:d}: {}.".format(v, self.g.vs[v]["name"] ) )
 
 
                 self.g.vs[v]["visited"] = True
                 #get all forks if vertex marked accordingly
                 forks = self.subgraphs_below(v)  
-                
+
                 # so far only supports bifurcation
                 if len(forks) > 1:
                     self.logger.info("{:d} forks at v: {}.".format( len(forks), forks ) )
@@ -351,7 +350,7 @@ class WorkflowBuilder:
                     # go up one level to while loop and rebuild topological order
                     # after modification of graph
                     self.logger.info("Forked and modified graph at node {}, rebuilding topological order.".format( v ) )
-                    break    
+                    break
             else: # only if inner loop did not break:
                 self.logger.info("All processed at node {}, finished.".format( v ) )
                 break # all vertices v have been visited, also in extended graph
@@ -406,7 +405,7 @@ class WorkflowBuilder:
             parent_distances = [ self.maximum_distance[p] for p in parents ]
 
             self.logger.info("{:d}: {:s}, dist. {:d}, top.pos. {:d} has {:d} parents with distances {}:".format(
-                v, self.g.vs[v]["name"], self.g.vs[v]["dist"], self.g.vs[v]["order"], len(parents), parent_distances))
+               v, self.g.vs[v]["name"], self.g.vs[v]["dist"], self.g.vs[v]["order"], len(parents), parent_distances))
             for p in parents:
                 self.logger.info("  {:d}: {:s}, dist. {:d}, top. pos. {:d}".format(
                     p, self.g.vs[p]["name"], self.g.vs[p]["dist"], self.g.vs[p]["order"]))
@@ -433,109 +432,161 @@ class WorkflowBuilder:
     def build_degenerate_graph(self):
         # traverse in topological order to assure all parents have been processed before their children
         fwId = self.positive_fw_id_generator()
-        
-        h = igraph.Graph(directed=True)
-        
-        for v in self.topological_order:
+
+        self.g.vs["visited"] = False
+
+        # self.h = igraph.Graph(directed=True)
+
+        while True:
+            vs = self.topological_order
+            self.logger.info("Current topological order: {}".format( vs ) )
+
+            env = self.subgraph_at(self.root) # the whole graph
+
+            for v in vs:
+                #v = self.topological_order[i]
+                if self.g.vs[v]["visited"] is False:
+                    break
+                self.logger.info("{:d}: {} has been visited before, move on.".format(v, self.g.vs[v]["name"] ) )
+            else:
+                break # all v visted
+
+            self.logger.info("{:d}: {}.".format(v, self.g.vs[v]["name"] ) )
             self.logger.info("Iterating node {:d}: {:s}".format(v, self.g.vs[v]["name"] ))
+
+            self.g.vs[v]["visited"] = True
+            #get all forks if vertex marked accordingly
+            #forks = self.subgraphs_below(v)
+            sub = self.subgraph_at(v) # all vertices below v
 
             fw_class_name = self.g.vs[v]["template"]
             if fw_class_name not in self.env.list_templates():
                     raise ValueError("No template '{:s}' exists!".format(fw_class_name))
-            # self.logger.warn("{}{}:".format(' '*depth, ))             
-
-            # degeneracy = degeneracy*len(persistent_context_updates)*len(transient_context_updates)
+            # self.logger.warn("{}{}:".format(' '*depth, ))
 
             # children = g.neighbors(v,mode=igraph.OUT)
-            
             # select  with largest distance to root as immediate predecessor
             # this is not well defined for parents on the same level
             # parents = self.g.neighbors(v,mode=igraph.IN)
-            
-            selected_parent = self.select_closest_parent(v)
-            if selected_parent is not None:
-                parent_instances = h.vs.select(instanceOf=selected_parent)    
-                parent_contexts = parent_instances["persistent"] # inherit context
-                parent_names = parent_instances["name"]
-            else:
-                parent_contexts = [ self.std_context ]
-                parent_names = [ None ]
-            
+
+            parent_id = self.select_closest_parent(v)
+            if parent_id is not None:
+                # parent_instances = self.h.vs.select(instanceOf=parent_id)
+                parent_context = self.h.vs[parent_id]["persistent"] # inherit context
+                parent_degeneracy = self.h.vs[parent_id]["degeneracy"]
+                parent_name = self.h.vs[parent_id]["name"]
+            else: # root node
+                parent_context = self.std_context
+                parent_degeneracy = 1
+                parent_name = None
 
             persistent_context_updates = self.g.vs[v]["persistent"]
             transient_context_updates = self.g.vs[v]["transient"]
-            
-            self.logger.info("Degenracy (persistent*transient): {:d}*{:d} = {:d}".format(
-                len(persistent_context_updates),len(transient_context_updates),len(persistent_context_updates)*len(transient_context_updates)))
 
-            self.logger.debug("  Parent names: {}".format(parent_names))
-            self.logger.debug("  Parent contexts: {}".format(parent_contexts))
+            degeneracy = parent_degeneracy*len(persistent_context_updates)*len(transient_context_updates)
+
+            self.logger.info("Degeneracy (persistent*transient): {:d}*{:d} = {:d}".format(
+                len(persistent_context_updates),len(transient_context_updates),degeneracy))
+
+            self.logger.debug("  Parent name: {}".format(parent_name))
+            self.logger.debug("  Parent context: {}".format(parent_context))
             self.logger.debug("  Child persistent context updates {}".format(persistent_context_updates))
             self.logger.debug("  Child transient context updates {}".format(transient_context_updates))
             # take all  instances and first apply ...
-            
+
             # return zip(parent_names, parent_contexts)
-            for (parent_name, parent_context) in zip(parent_names, parent_contexts):
-                
-                self.logger.info("  Iterating parent {}:".format(parent_name))
-                
-                for i, persistent_context_update in enumerate(persistent_context_updates):
-                    self.logger.info("    Iterating persitent content update {:d}:".format(i))
-                    # ... persitent changes ...
-                    persistent_context = parent_context.copy()
-                    persistent_context.update( persistent_context_update )
-                    
-                    self.logger.debug("      Current persistent context: {}".format(persistent_context))
+            # if degeneracy > 1
+                # for (parent_name, parent_context) in zip(parent_names, parent_contexts):
 
-                    
-                    for j, transient_context_update in enumerate(transient_context_updates):
-                        self.logger.info("      Iterating transient content update {:d}:".format(j))
-                        # then apply transient changes ...
-                        transient_context = persistent_context.copy()
-                        transient_context.update( transient_context_update )
-                        
-                        self.logger.debug("        Current transient context: {}".format(transient_context))
-                        
-                        fw_id = next(fwId) # get unique id
-                        
-                        child_name = "{:s}_{:04d}".format(fw_class_name,fw_id)
-                        h.add_vertex(
-                            child_name, 
-                            instanceOf=v, 
-                            fw_id=fw_id, 
-                            persistent=persistent_context, 
-                            transient=transient_context)
-                        child_id = h.vs.find(name=child_name).index
-                        
-                        self.logger.info("          Instance {:d} - {:d} - {:s} of class {:d} - {:s} created.".format(
-                            child_id, 
-                            fw_id, 
-                            child_name,
-                            h.vs[child_id]["instanceOf"], 
-                            self.g.vs[ h.vs[child_id]["instanceOf"] ]["name"] ) )
-                        
-                        if parent_name is not None:
-                            h.add_edge(parent_name, child_name)
-                            parent_id = h.vs.find(name=parent_name).index
-                            self.logger.info("          Attached to instance {:d} - {:d} - {:s} of class {:d}: {:s}.".format(
-                                parent_id, 
-                                h.vs[parent_id]["fw_id"], 
-                                h.vs[parent_id]["name"], 
-                                h.vs[parent_id]["instanceOf"], 
-                                self.g.vs[ h.vs[parent_id]["instanceOf"] ]["name"]))
-                        
-                        # TODO: attach remaining parents
-                        self.logger.info("      Completed transient content update {:d}:".format(j))
-                    self.logger.info("    Completed persitent content update {:d}:".format(i))
-                self.logger.info("  Completed parent {}:".format(parent_name))
-            self.logger.info("Completed node {:d}: {:s}".format(v, self.g.vs[v]["name"] ))
-            #break
+            self.logger.info("  Iterating parent {}:".format(parent_name))
 
-        h.vs["label"] = h.vs["name"]
-        h.vs["label_size"] = self.plt_label_font_size
-        return h
+            self.h = self.g.copy()
+            for i, persistent_context_update in enumerate(persistent_context_updates):
+                self.logger.info("    Iterating persitent content update {:d}:".format(i))
+                # ... persitent changes ...
+                persistent_context = parent_context.copy()
+                persistent_context.update( persistent_context_update )
+                self.logger.debug("      Current persistent context: {}".format(persistent_context))
+
+                for j, transient_context_update in enumerate(transient_context_updates):
+                    self.logger.info("      Iterating transient content update {:d}:".format(j))
+                    # then apply transient changes ...
+                    transient_context = persistent_context.copy()
+                    transient_context.update( transient_context_update )
+
+                    self.logger.debug("        Current transient context: {}".format(transient_context))
+
+                    fw_id = next(fwId) # get unique id
+
+                    suffix = "_{:06d}".format(fw_id)
+                    child_name = "{:s}{:s}".format(fw_class_name,suffix)
+                    sub_to_dup = self.duplicate_subset(sub, env, suffix)
+
+                    # update properties of new subgraph root
+                    self.h.vs[ sub_to_dup[v] ]["name"] = child_name
+                    self.h.vs[ sub_to_dup[v] ]["persistent"] = persistent_context
+                    self.h.vs[ sub_to_dup[v] ]["degeneracy"] = degeneracy
+                    self.h.vs[ sub_to_dup[v] ]["fw_id"]      = fw_id
+                    # self.h.add_vertex(
+                    #    child_name,
+                    #    instanceOf=v,
+                    #    fw_id=fw_id,
+                    #    persistent=persistent_context,
+                    #    transient=transient_context)
+                    # child_id = self.h.vs.find(name=child_name).index
+
+                    self.logger.info("          Instance {:d} - {:d} - {:s} of class {:d} - {:s} created.".format(
+                        sub_to_dup[v],
+                        fw_id,
+                        child_name,
+                        v,
+                        self.g.vs[v]["template"] ) )
+                    #if parent_name is not None:
+                    #    self.h.add_edge(parent_name, child_name)
+                    #    parent_id = h.vs.find(name=parent_name).index
+                    #    self.logger.info("          Attached to instance {:d} - {:d} - {:s} of class {:d}: {:s}.".format(
+                    #        parent_id,
+                    #        h.vs[parent_id]["fw_id"],
+                    #        h.vs[parent_id]["name"],
+                    #        h.vs[parent_id]["instanceOf"],
+                    #        self.g.vs[ h.vs[parent_id]["instanceOf"] ]["name"]))
+                    #to_delete.update(overlap)
+
+                    # go up one level to while loop and rebuild topological order
+                    # after modification of graph
+                    self.logger.info("      Completed transient content update {:d}:".format(j))
+
+                self.logger.info("    Completed persitent content update {:d}:".format(i))
+            #self.logger.info("  Completed parent {}:".format(parent_name))
+
+            self.h.delete_vertices(sub)
+            self.g = self.h
+
+            self.logger.info("      Modified graph at node {}, rebuilding topological order.".format( v ) )
+            self.logger.info("Completed node {:d}: {:s}".format(v, self.g.vs[v]["name"] ) )
+
+        self.logger.info("All processed at node {}, finished.".format( v ) )
+        self.update()
+
+        return
 
     def plot(self, g = None):
-        if g is None: 
+        if g is None:
             g = self.g
         return igraph.plot(g, layout = self.plt_layout, bbox = self.plt_bbox, margin = self.plt_margin)
+
+    def show_attributes(self, vs=None, exclude=[
+        "name", "persistent", "transient", "label", "label_size", "visited"] ):
+        if vs is None:
+            vs = self.g.vs
+        else:
+            vs = self.g.vs.select(vs)
+
+        return tabulate(
+            [
+                [ '', "name", *[a for a in vs.attribute_names() if a not in exclude] ],
+                *list(
+                    zip(
+                        [ i for i in range(len(vs)) ],
+                        vs["name"],
+                        *[ vs[a] for a in vs.attribute_names() if a not in exclude ] ) ) ] )
