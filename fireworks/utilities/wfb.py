@@ -178,9 +178,10 @@ class WorkflowBuilder:
     def find_undefined_variables(self):
         template_variables = { 'all' : set() }
         for template_name in self.env.list_templates():
+            self.logger.info("Loading template {:s}.".format( template_name ) )
             template_source = self.env.loader.get_source(self.env,template_name)[0]
             parsed_content = self.env.parse(template_source)
-            template_variables[template_name] = meta.find_undeclared_variables(parsed_content)        
+            template_variables[template_name] = meta.find_undeclared_variables(parsed_content)
             template_variables['all'] = template_variables['all'] | template_variables[template_name]
         return template_variables
 
