@@ -4,9 +4,20 @@ __author__ = 'Johannes Hörmann'
 __email__ = 'johannes.hoermann@imtek.uni-freiburg.de'
 __copyright__ = 'Copyright 2019, University of Freiburg'
 
-import logging, igraph, itertools
+# IO, formats:
+import logging, os.path
+from tabulate import tabulate
+from pprint import pprint
+import yaml
+from jinja2 import Template, Environment, FileSystemLoader
+from jinja2 import select_autoescape, meta
+from fireworks import Firework, Workflow
+
+# graphs and datastructures
+import igraph, itertools
 import numpy as np
 from collections.abc import Iterable
+
 
 class WorkflowBuilder:
     std_context         = {}
@@ -22,6 +33,9 @@ class WorkflowBuilder:
     topological_order = None
     
     root = None
+
+    #  template engine
+    env = None
     
     logger = None
     
@@ -70,55 +84,69 @@ class WorkflowBuilder:
         with open(system_file) as stream:
             system = yaml.safe_load(stream)
 
-        logger.info("File '{:s} contains the sections {}.".format( system_file, list(system.keys())) )
+        self.logger.info("File '{:s} contains the sections {}.".format( system_file, list(system.keys())) )
         
         self.std_context = system['std']
         self.persistent_contexts = system['persistent']
         self.transient_contexts = system['transient']
         self.dependencies = system['dependencies']
-        
+
+    def initialize_template_engine(self):
+        self.env = Environment(
+          loader=FileSystemLoader('templates'),
+          autoescape=select_autoescape(['yaml']))
+
+    def render_template(template_name,context,suffix='',outdir='build'):
+        template = self.env.get_template(template_name)
+        output = template.render(std_settings)
+        outfile_name = os.path.join(outdir,template.name,suffix)
+        with open(outfile_name, 'w') as of:
+            of.write(output)
+        return outfile_name
+    
+    def find_undefined_variables(self):
+        template_variables = { 'all' : set() }
+        for template_name in self.env.list_templates():
+            template_source = self.env.loader.get_source(self.env,template_name)[0]
+            parsed_content = self.env.parse(template_source)
+            template_variables[template_name] = meta.find_undeclared_variables(parsed_content)        
+            template_variables['all'] = template_variables['all'] | template_variables[template_name]
+        return template_variables
+
+    def variable_overview(self, variables):
+        lines = [ [ '', *variables['all'] ] ]
+        for t,tv in variables.items():
+            if t is not 'all':
+                line = [ t ]
+                line.extend( [ 'x' if v in tv else '' for v in variables['all'] ] )
+                lines.append(line)
+        return tabulate(lines,tablefmt='fancy_grid')
+
+    def show_undefined_variables(self):
+        return self.variable_overview( self.find_undefined_variables() )
+
     def build_graph(self):
         fws_set = set()
         for k,vv in self.dependencies.items():
             v = [ list(v.keys())[0] if type(v) is dict else v for v in vv ]
             fws_set.update([k,*v])
-            
+
         self.g = igraph.Graph(directed=True)
         self.g.add_vertices(sorted(list(fws_set)))
-        logger.info("Graph contains {:d} nodes: {}.".format( len(self.g.vs), self.g.vs["name"] ) )
+        self.logger.info("Graph contains {:d} nodes: {}.".format( len(self.g.vs), self.g.vs["name"] ) )
 
         #edges = [ (parent, child) for parent, children in self.dependencies.items() for child in children ]
         for parent, children in self.dependencies.items():
             for child in children:
                 if type(child) is dict:
                     edge_type = list(child.values())[0] # expect only one entry
-                    child     = list(child.keys())[0] 
+                    child     = list(child.keys())[0]
                 else:
                     edge_type = 0 # default
-                self.g.add_edge(parent,child,type=edge_type)        
-        logger.info("Graph contains {:d} edges: {}.".format( len(self.g.es),
+                self.g.add_edge(parent,child,type=edge_type)
+        self.logger.info("Graph contains {:d} edges: {}.".format( len(self.g.es),
             [ (self.g.vs[ self.g.es[e].source ]["name"], self.g.vs[ self.g.es[e].target ]["name"] ) for e in self.g.es.indices ] ) )
-        
-        if not self.g.is_dag():
-            logger.exception("Graph is not DAG!")
-            raise ValueError
-            
-        root = np.where(np.equal(self.g.degree(mode=igraph.IN),0))[0]
-        if len(root) == 0:
-            logger.exception("Graph has no root!")
-            raise ValueError
-        elif len(root) > 1:
-            logger.exception("Graph root not unique: {}!".format( [ self.ge.vs[v]["name"] for v in root ]))
-            raise ValueError
-        
-        self.root = int(root[0])
-        logger.info("Identified root {}.".format( self.g.vs[self.root]["name"] ) )
-        
-        #self.topological_order = list(reversed(self.postorder()))
-        
-        self.g.vs["order"] = self.topological_order
-        self.g.vs["dist"] = self.maximum_distance
-        
+
         #self.g.vs["instance"] = [[]]*len(self.g.vs)   # list of instances
         self.g.vs["persistent"] = [[{}]]*len(self.g.vs) # list of persistent contexts
         self.g.vs["transient"] = [[{}]]*len(self.g.vs)  # list of transient contextes 
@@ -128,10 +156,30 @@ class WorkflowBuilder:
             if v["name"] in self.transient_contexts:
                 v["transient"] = self.transient_contexts[ v["name"] ]
                 
-        #self.g.vs["persistent"] = [[]]*len(self.g.vs) # list of persistent contexts
-        #self.g.vs["transient"] = [[]]*len(self.g.vs)  # list of transient contextes 
-        
-                # for plotting purposes:
+        self.g.vs["template"] = self.g.vs["name"]  # this must not be touched later 
+
+        self.update()
+
+    def update(self):
+        if not self.g.is_dag():
+            self.logger.exception("Graph is not DAG!")
+            raise ValueError
+            
+        root = np.where(np.equal(self.g.degree(mode=igraph.IN),0))[0]
+        if len(root) == 0:
+            self.logger.exception("Graph has no root!")
+            raise ValueError
+        elif len(root) > 1:
+            self.logger.exception("Graph root not unique: {}!".format( [ self.ge.vs[v]["name"] for v in root ]))
+            raise ValueError
+
+        self.root = int(root[0])
+        self.logger.info("Identified root {}.".format( self.g.vs[self.root]["name"] ) )
+
+        self.g.vs["order"] = self.topological_order
+        self.g.vs["dist"] = self.maximum_distance
+
+        # for plotting purposes:
         # self.plt_layout = self.g.layout_auto() 
         try:
             #self.plt_layout = self.g.layout_reingold_tilford(mode="out", root=[self.root]) # tree-like
@@ -139,12 +187,11 @@ class WorkflowBuilder:
         except:
             #self.plt_layout = self.g.layout_kamada_kawai()
             self.plt_layout = self.g.layout_sugiyama()
-            
-        #self.plt_layout = self.g.layout_reingold_tilford_circular(mode="out", root=self.root, rootlevel=0 )
-        #self.plt_layout = self.g.layout_fruchterman_reingold( )
+
         self.g.vs["label"] = self.g.vs["name"]
         self.g.vs["label_size"] = self.plt_label_font_size
-        
+
+
     def subgraph_at(self, v, x=set()):
         """Returns indices of all vertices in the subgraph beginning at node v, not following any edges leading to vertices in x"""
         if not isinstance(x, Iterable):
@@ -184,7 +231,7 @@ class WorkflowBuilder:
         return visited
         
         # visited has now all vertices of subgraph
-        logger.info("Selected subgraph with nodes: {}.".format( internal ) )
+        self.logger.info("Selected subgraph with nodes: {}.".format( internal ) )
         
     def duplicate_subset(self,sub,env,suffix='*'):
         """Duplicates subset within environment"""
@@ -197,7 +244,7 @@ class WorkflowBuilder:
             nam = new_name(v)
             self.h.add_vertex( nam )
             w = self.h.vs.find(name=nam).index
-            logger.info("Added vertex {:d} - {:s}".format( w, nam ) )
+            self.logger.info("Added vertex {:d} - {:s}".format( w, nam ) )
             for attribute in self.g.vs.attribute_names():
                 if attribute is not "name":
                     self.h.vs[w][attribute] = self.g.vs[v][attribute]
@@ -207,7 +254,7 @@ class WorkflowBuilder:
         def duplicate_edge(e,s,t):
             self.h.add_edge(s,t)
             f = self.h.get_eid(s,t)
-            logger.info("Added edge {:d} - ({:d}-{:d})".format( f, s, t ) )
+            self.logger.info("Added edge {:d} - ({:d}-{:d})".format( f, s, t ) )
             for attribute in self.g.es.attribute_names():
                 self.h.es[f][attribute] = self.g.es[e][attribute]
             return f
@@ -248,15 +295,15 @@ class WorkflowBuilder:
         suffix=''
         while True:    
             vs = self.topological_order     
-            logger.info("Current topological order: {}".format( vs ) )
+            self.logger.info("Current topological order: {}".format( vs ) )
 
             for v in vs:
                 #v = self.topological_order[i]
                 if self.g.vs[v]["visited"] is True:
-                    logger.info("{:d}: {} has been visited before, move on.".format(v, self.g.vs[v]["name"] ) )
+                    self.logger.info("{:d}: {} has been visited before, move on.".format(v, self.g.vs[v]["name"] ) )
                     continue
                     
-                logger.info("{:d}: {}.".format(v, self.g.vs[v]["name"] ) )
+                self.logger.info("{:d}: {}.".format(v, self.g.vs[v]["name"] ) )
 
 
                 self.g.vs[v]["visited"] = True
@@ -265,7 +312,7 @@ class WorkflowBuilder:
                 
                 # so far only supports bifurcation
                 if len(forks) > 1:
-                    logger.info("{:d} forks at v: {}.".format( len(forks), forks ) )
+                    self.logger.info("{:d} forks at v: {}.".format( len(forks), forks ) )
 
                     fl = forks.pop()
                     self.h = self.g.copy()
@@ -275,25 +322,25 @@ class WorkflowBuilder:
 
                     fr = forks.pop()
 
-                    logger.info("Lef and right fork: {}.".format( fl, fr ) )
+                    self.logger.info("Lef and right fork: {}.".format( fl, fr ) )
                     overlap = fl & fr
-                    logger.info("Overlap: {}.".format( overlap ) )
+                    self.logger.info("Overlap: {}.".format( overlap ) )
 
 
                     #env = set(self.topological_order) # a set of all nodes
                     env = set(self.subgraph_at(self.root)) # a set of all nodes
-                    logger.info("Current set of vertices: {}.".format( env ) )
+                    self.logger.info("Current set of vertices: {}.".format( env ) )
                     
                     suffix = suffix + '*'
 
                     lenv = (env - fr ) | fl
-                    logger.info("Environment of left fork: {}.".format( lenv ) )
+                    self.logger.info("Environment of left fork: {}.".format( lenv ) )
                     self.duplicate_subset(overlap,lenv,suffix)
 
                     suffix = suffix + '*'
 
                     renv = (env - fl ) | fr
-                    logger.info("Environment of right fork: {}.".format( lenv ) )
+                    self.logger.info("Environment of right fork: {}.".format( lenv ) )
 
                     self.duplicate_subset(overlap,renv,suffix)
 
@@ -303,12 +350,12 @@ class WorkflowBuilder:
                     
                     # go up one level to while loop and rebuild topological order
                     # after modification of graph
-                    logger.info("Forked and modified graph at node {}, rebuilding topological order.".format( v ) )
+                    self.logger.info("Forked and modified graph at node {}, rebuilding topological order.".format( v ) )
                     break    
             else: # only if inner loop did not break:
-                logger.info("All processed at node {}, finished.".format( v ) )
+                self.logger.info("All processed at node {}, finished.".format( v ) )
                 break # all vertices v have been visited, also in extended graph
-            logger.info("Completed processing node {}, descending.".format( v ) )
+            self.logger.info("Completed processing node {}, descending.".format( v ) )
         return    
             
     def maximum_spanning_tree(self):
@@ -324,9 +371,9 @@ class WorkflowBuilder:
         bfs = self.g.bfsiter(self.root, mode = igraph.OUT, advanced = True)
         for (v, depth, p) in bfs:
             if p is not None:
-                logger.info("{:03d}: {:s} - depth {:0d},  {:03d}: {:s}".format(v.index, v["name"], depth, p.index, p["name"] ))
+                self.logger.info("{:03d}: {:s} - depth {:0d},  {:03d}: {:s}".format(v.index, v["name"], depth, p.index, p["name"] ))
             else:
-                logger.info("{:03d}: {:s} - depth {:0d}, no ".format(v.index, v["name"], depth))
+                self.logger.info("{:03d}: {:s} - depth {:0d}, no ".format(v.index, v["name"], depth))
                 
     def tree(self):
         """Yields tree with possibly degenerate vertices"""
@@ -358,29 +405,29 @@ class WorkflowBuilder:
         if len(parents) > 0:
             parent_distances = [ self.maximum_distance[p] for p in parents ]
 
-            logger.info("{:d}: {:s}, dist. {:d}, top.pos. {:d} has {:d} parents with distances {}:".format(
+            self.logger.info("{:d}: {:s}, dist. {:d}, top.pos. {:d} has {:d} parents with distances {}:".format(
                 v, self.g.vs[v]["name"], self.g.vs[v]["dist"], self.g.vs[v]["order"], len(parents), parent_distances))
             for p in parents:
-                logger.info("  {:d}: {:s}, dist. {:d}, top. pos. {:d}".format(
+                self.logger.info("  {:d}: {:s}, dist. {:d}, top. pos. {:d}".format(
                     p, self.g.vs[p]["name"], self.g.vs[p]["dist"], self.g.vs[p]["order"]))
 
             # select indices of closest parents
             closest_parents = [ parents[p] for p in np.where( np.equal( np.max(parent_distances), parent_distances ) )[0] ]
 
-            logger.info("    Maximum distance {:d} at parent {}".format(np.max(parent_distances),closest_parents) )
+            self.logger.info("    Maximum distance {:d} at parent {}".format(np.max(parent_distances),closest_parents) )
 
             if len(closest_parents) > 1:
-                logger.warn("  {:d} parents are equally closest to child: Choice of context not unique.".format(len(closest_parents)))
+                self.logger.warn("  {:d} parents are equally closest to child: Choice of context not unique.".format(len(closest_parents)))
                 for p in closest_parents:
-                    logger.warn("    {:d}: {:s}, dist. {:d}, top. pos. {:d}".format(
+                    self.logger.warn("    {:d}: {:s}, dist. {:d}, top. pos. {:d}".format(
                         p, self.g.vs[p]["name"], self.g.vs[p]["dist"], self.g.vs[p]["order"]))
-                logger.warn("  Choice of context not unique.")
+                self.logger.warn("  Choice of context not unique.")
 
             selected_parent = closest_parents[0]
-            logger.info("  {:d}: {:s}, dist. {:d}, top. pos. {:d} selected as immediate parent".format(
+            self.logger.info("  {:d}: {:s}, dist. {:d}, top. pos. {:d} selected as immediate parent".format(
                 selected_parent, self.g.vs[selected_parent]["name"], self.g.vs[selected_parent]["dist"], self.g.vs[selected_parent]["order"]))
         else:
-            logger.info("{:d}: {:s}, dist. {:d}, top.pos. {:d} has no parents.".format(v, self.g.vs[v]["name"], self.g.vs[v]["dist"], self.g.vs[v]["order"]))
+            self.logger.info("{:d}: {:s}, dist. {:d}, top.pos. {:d} has no parents.".format(v, self.g.vs[v]["name"], self.g.vs[v]["dist"], self.g.vs[v]["order"]))
         return selected_parent
 
     def build_degenerate_graph(self):
@@ -390,12 +437,12 @@ class WorkflowBuilder:
         h = igraph.Graph(directed=True)
         
         for v in self.topological_order:
-            logger.info("Iterating node {:d}: {:s}".format(v, self.g.vs[v]["name"] ))
+            self.logger.info("Iterating node {:d}: {:s}".format(v, self.g.vs[v]["name"] ))
 
-            fw_class_name = self.g.vs[v]["name"]
-            if fw_class_name not in env.list_templates():
+            fw_class_name = self.g.vs[v]["template"]
+            if fw_class_name not in self.env.list_templates():
                     raise ValueError("No template '{:s}' exists!".format(fw_class_name))
-            # logger.warn("{}{}:".format(' '*depth, ))             
+            # self.logger.warn("{}{}:".format(' '*depth, ))             
 
             # degeneracy = degeneracy*len(persistent_context_updates)*len(transient_context_updates)
 
@@ -418,36 +465,36 @@ class WorkflowBuilder:
             persistent_context_updates = self.g.vs[v]["persistent"]
             transient_context_updates = self.g.vs[v]["transient"]
             
-            logger.info("Degenracy (persistent*transient): {:d}*{:d} = {:d}".format(
+            self.logger.info("Degenracy (persistent*transient): {:d}*{:d} = {:d}".format(
                 len(persistent_context_updates),len(transient_context_updates),len(persistent_context_updates)*len(transient_context_updates)))
 
-            logger.debug("  Parent names: {}".format(parent_names))
-            logger.debug("  Parent contexts: {}".format(parent_contexts))
-            logger.debug("  Child persistent context updates {}".format(persistent_context_updates))
-            logger.debug("  Child transient context updates {}".format(transient_context_updates))
+            self.logger.debug("  Parent names: {}".format(parent_names))
+            self.logger.debug("  Parent contexts: {}".format(parent_contexts))
+            self.logger.debug("  Child persistent context updates {}".format(persistent_context_updates))
+            self.logger.debug("  Child transient context updates {}".format(transient_context_updates))
             # take all  instances and first apply ...
             
             # return zip(parent_names, parent_contexts)
             for (parent_name, parent_context) in zip(parent_names, parent_contexts):
                 
-                logger.info("  Iterating parent {}:".format(parent_name))
+                self.logger.info("  Iterating parent {}:".format(parent_name))
                 
                 for i, persistent_context_update in enumerate(persistent_context_updates):
-                    logger.info("    Iterating persitent content update {:d}:".format(i))
+                    self.logger.info("    Iterating persitent content update {:d}:".format(i))
                     # ... persitent changes ...
                     persistent_context = parent_context.copy()
                     persistent_context.update( persistent_context_update )
                     
-                    logger.debug("      Current persistent context: {}".format(persistent_context))
+                    self.logger.debug("      Current persistent context: {}".format(persistent_context))
 
                     
                     for j, transient_context_update in enumerate(transient_context_updates):
-                        logger.info("      Iterating transient content update {:d}:".format(j))
+                        self.logger.info("      Iterating transient content update {:d}:".format(j))
                         # then apply transient changes ...
                         transient_context = persistent_context.copy()
                         transient_context.update( transient_context_update )
                         
-                        logger.debug("        Current transient context: {}".format(transient_context))
+                        self.logger.debug("        Current transient context: {}".format(transient_context))
                         
                         fw_id = next(fwId) # get unique id
                         
@@ -460,7 +507,7 @@ class WorkflowBuilder:
                             transient=transient_context)
                         child_id = h.vs.find(name=child_name).index
                         
-                        logger.info("          Instance {:d} - {:d} - {:s} of class {:d} - {:s} created.".format(
+                        self.logger.info("          Instance {:d} - {:d} - {:s} of class {:d} - {:s} created.".format(
                             child_id, 
                             fw_id, 
                             child_name,
@@ -470,7 +517,7 @@ class WorkflowBuilder:
                         if parent_name is not None:
                             h.add_edge(parent_name, child_name)
                             parent_id = h.vs.find(name=parent_name).index
-                            logger.info("          Attached to instance {:d} - {:d} - {:s} of class {:d}: {:s}.".format(
+                            self.logger.info("          Attached to instance {:d} - {:d} - {:s} of class {:d}: {:s}.".format(
                                 parent_id, 
                                 h.vs[parent_id]["fw_id"], 
                                 h.vs[parent_id]["name"], 
@@ -478,16 +525,16 @@ class WorkflowBuilder:
                                 self.g.vs[ h.vs[parent_id]["instanceOf"] ]["name"]))
                         
                         # TODO: attach remaining parents
-                        logger.info("      Completed transient content update {:d}:".format(j))
-                    logger.info("    Completed persitent content update {:d}:".format(i))
-                logger.info("  Completed parent {}:".format(parent_name))
-            logger.info("Completed node {:d}: {:s}".format(v, self.g.vs[v]["name"] ))
+                        self.logger.info("      Completed transient content update {:d}:".format(j))
+                    self.logger.info("    Completed persitent content update {:d}:".format(i))
+                self.logger.info("  Completed parent {}:".format(parent_name))
+            self.logger.info("Completed node {:d}: {:s}".format(v, self.g.vs[v]["name"] ))
             #break
-            
+
         h.vs["label"] = h.vs["name"]
         h.vs["label_size"] = self.plt_label_font_size
         return h
-        
+
     def plot(self, g = None):
         if g is None: 
             g = self.g
