@@ -123,7 +123,12 @@ class WorkflowBuilder:
             context =   self.g.vs[v]["transient"]
             outfile =   self.g.vs[v]["name"] # all anmes should be unique!
 
-            self.render_template(template, outfile, context)
+            try:
+              self.render_template(template, outfile, context)
+            except:
+              self.logger.exception("Error rendering template '{:s}'!".format(template))
+              raise
+
             dep[outfile] = [ self.g.vs[c]["name"] for c in self.g.neighbors(v,mode=igraph.OUT) ]
 
         with open(os.path.join(self.build_dir,"dependencies.yaml"), 'w') as f:
@@ -180,7 +185,11 @@ class WorkflowBuilder:
         for template_name in self.env.list_templates():
             self.logger.info("Loading template {:s}.".format( template_name ) )
             template_source = self.env.loader.get_source(self.env,template_name)[0]
-            parsed_content = self.env.parse(template_source)
+            try:
+                parsed_content = self.env.parse(template_source)
+            except:
+                self.logger.exception("Failed parsing template '{:s}'".format(template_name))
+                raise
             template_variables[template_name] = meta.find_undeclared_variables(parsed_content)
             template_variables['all'] = template_variables['all'] | template_variables[template_name]
         return template_variables
@@ -195,6 +204,7 @@ class WorkflowBuilder:
         return tabulate(lines,tablefmt='fancy_grid')
 
     def show_undefined_variables(self):
+        """Show a table of all undefined variables in templates"""
         return self.variable_overview( self.find_undefined_variables() )
 
     def build_graph(self):
