@@ -252,7 +252,7 @@ class WorkflowBuilder:
             self.logger.exception("Graph has no root!")
             raise ValueError
         elif len(root) > 1:
-            self.logger.exception("Graph root not unique: {}!".format( [ self.ge.vs[v]["name"] for v in root ]))
+            self.logger.exception("Graph root not unique: {}!".format( [ self.g.vs[v]["name"] for v in root ]))
             raise ValueError
 
         self.root = int(root[0])
