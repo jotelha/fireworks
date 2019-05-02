@@ -427,6 +427,7 @@ class WorkflowBuilder:
                     #to_delete.update(overlap)
                     self.h.delete_vertices(overlap)
                     self.g = self.h
+                    self.update() # root index might change
                     
                     # go up one level to while loop and rebuild topological order
                     # after modification of graph
@@ -643,12 +644,12 @@ class WorkflowBuilder:
 
             self.h.delete_vertices(sub)
             self.g = self.h
+            self.update() # root index might have changed
 
             self.logger.info("      Modified graph at node {}, rebuilding topological order.".format( v ) )
             self.logger.info("Completed node {:d}: {:s}".format(v, self.g.vs[v]["name"] ) )
 
         self.logger.info("All processed at node {}, finished.".format( v ) )
-        self.update()
 
         return
 
