@@ -16,6 +16,13 @@ set ::JlhVmd::overlap_distance {{ overlap_distance|default(2.0,true) }}
 # clip indenter that far away from cell boundary:
 set ::JlhVmd::padding_distance {{ padding_distance|default(5.0,true) }}
 
+# clip indenter that far away from cell boundary:
+set ::JlhVmd::bounding_box [ \
+  list [ list {{ xlo|default(0.0,true) }} \
+      {{ ylo|default(0.0,true) }} {{ zlo|default(0.0,true) }} ] \
+    [ list {{ xhi|default(0.0,true) }} {{ yhi|default(0.0,true) }} \
+      {{ zhi|default(0.0,true) }} ] ]
+
 if { [catch {
   batch_process_pdb_visual {{interface_file}} {{indenter_file}} {{output_prefix}}
 } errmsg ] } {
