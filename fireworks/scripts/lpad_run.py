@@ -122,20 +122,35 @@ def get_lp(args):
 
 
 def init_yaml(args):
-    fields = (
-        ("host", "localhost"),
-        ("port", 27017),
-        ("name", "fireworks"),
-        ("username", None),
-        ("password", None),
-        ("ssl_ca_file", None))
+    if args.uri_mode:
+        fields = (
+            ("host", None, "Example: mongodb+srv://USER:PASSWORD@CLUSTERNAME.mongodb.net/fireworks"),
+            ("ssl_ca_file", None, "Path to any client certificate to be used for mongodb connection"),
+            ("authsource", None, "Database used for authentication, if not connection db. e.g., for MongoDB Atlas this is sometimes 'admin'."))
+    else:
+        fields = (
+            ("host", "localhost", "Example: 'localhost' or 'mongodb+srv://CLUSTERNAME.mongodb.net'"),
+            ("port", 27017, ""),
+            ("name", "fireworks", "Database under which to store the fireworks collections"),
+            ("username", None, "Username for MongoDB authentication"),
+            ("password", None, "Password for MongoDB authentication"),
+            ("ssl_ca_file", None, "Path to any client certificate to be used for Mongodb connection"),
+            ("authsource", None, "Database used for authentication, if not connection db. e.g., for MongoDB Atlas this is sometimes 'admin'."))
+
     doc = {}
+    if args.uri_mode:
+        print("Note 1: You are in URI format mode. This means that all database parameters (username, password, host, port, database name, etc.) must be present in the URI. See: https://docs.mongodb.com/manual/reference/connection-string/ for details.")
+        print("(Enter your connection URI in under the 'host' parameter)")
     print("Please supply the following configuration values")
     print("(press Enter if you want to accept the defaults)\n")
-    for k, v in fields:
-        val = input("Enter {} (default: {}) : ".format(k, v))
-        doc[k] = val if val else v
-    doc["port"] = int(doc["port"])  # enforce the port as an int
+    for k, default, helptext in fields:
+        val = input("Enter {} parameter. (default: {}). {}: ".format(k, default, helptext))
+        doc[k] = val if val else default
+    if "port" in doc:
+        doc["port"] = int(doc["port"])  # enforce the port as an int
+    if args.uri_mode:
+        doc["uri_mode"] = True
+
     lp = LaunchPad.from_dict(doc)
     lp.to_file(args.config_file)
     print("\nConfiguration written to {}!".format(args.config_file))
@@ -490,8 +505,15 @@ def cancel_qid(args):
 
 
 def set_priority(args):
+    wf_mode = args.wf
     lp = get_lp(args)
-    fw_ids = parse_helper(lp, args)
+    fw_ids = parse_helper(lp, args, wf_mode=wf_mode)
+    if wf_mode:
+        all_fw_ids = set()
+        for fw_id in fw_ids:
+            wf = lp.get_wf_by_fw_id_lzyfw(fw_id)
+            all_fw_ids.update(wf.id_fw.keys())
+        fw_ids = list(all_fw_ids)
     for f in fw_ids:
         lp.set_priority(f, args.priority)
         lp.m_logger.debug("Processed fw_id {}".format(f))
@@ -718,6 +740,9 @@ def lpad():
 
     init_parser = subparsers.add_parser(
         'init', help='Initialize a Fireworks launchpad YAML file.')
+    init_parser.add_argument('-u', '--uri_mode',
+                              action="store_true",
+                              help="Connect via a URI, see: https://docs.mongodb.com/manual/reference/connection-string/")
     init_parser.add_argument('--config-file', default=DEFAULT_LPAD_YAML,
                              type=str,
                              help="Filename to write to.")
@@ -1011,6 +1036,8 @@ def lpad():
                                                     "Password or positive response to input prompt "
                                                     "required when modifying more than {} "
                                                     "entries.".format(PW_CHECK_NUM))
+    priority_parser.add_argument('-wf', action='store_true',
+                                 help='the priority will be set for all the fireworks of the matching workflows')
     priority_parser.set_defaults(func=set_priority)
 
     parser.add_argument('-l', '--launchpad_file', help='path to LaunchPad file containing '

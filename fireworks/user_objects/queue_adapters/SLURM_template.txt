@@ -9,6 +9,7 @@
 #SBATCH --gres=$${gres}
 #SBATCH --qos=$${qos}
 #SBATCH --time=$${walltime}
+#SBATCH --time-min=$${time_min}
 #SBATCH --partition=$${queue}
 #SBATCH --account=$${account}
 #SBATCH --job-name=$${job_name}
@@ -19,6 +20,8 @@
 #SBATCH --signal=$${signal}
 #SBATCH --mem=$${mem}
 #SBATCH --mem-per-cpu=$${mem_per_cpu}
+#SBATCH --mail-type=$${mail_type}
+#SBATCH --mail-user=$${mail_user}
 
 
 $${pre_rocket}

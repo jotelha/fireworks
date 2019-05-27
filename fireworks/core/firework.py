@@ -699,7 +699,7 @@ class Workflow(FWSerializable):
         links_dict = links_dict if links_dict else {}
 
         # main dict containing mapping of an id to a Firework object
-        self.id_fw = {}
+        self.id_fw = OrderedDict()
         for fw in fireworks:
             if fw.fw_id in self.id_fw:
                 raise ValueError('FW ids must be unique!')
@@ -739,7 +739,7 @@ class Workflow(FWSerializable):
         if fw_states:
             self.fw_states = fw_states
         else:
-            self.fw_states = {key:self.id_fw[key].state for key in self.id_fw}
+            self.fw_states = {key: self.id_fw[key].state for key in self.id_fw}
 
     @property
     def fws(self):
@@ -942,6 +942,10 @@ class Workflow(FWSerializable):
                         if m_launch.state == 'COMPLETED' and m_launch.action.mod_spec:
                             for mod in m_launch.action.mod_spec:
                                 apply_mod(mod, new_wf.id_fw[root_id].spec)
+
+        # set the FW state variable for all new fw ids to be WAITING
+        for new_fw in new_wf.fws:
+            self.fw_states[new_fw.fw_id] = 'WAITING'  # this should get updated by refresh() below
 
         for new_fw in new_wf.fws:
             updated_ids = self.refresh(new_fw.fw_id, set(updated_ids))

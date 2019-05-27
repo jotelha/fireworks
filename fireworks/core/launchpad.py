@@ -33,6 +33,8 @@ from fireworks.fw_config import LAUNCHPAD_LOC, SORT_FWS, RESERVATION_EXPIRATION_
 from fireworks.utilities.fw_serializers import FWSerializable, reconstitute_dates
 from fireworks.core.firework import Firework, Launch, Workflow, FWAction, Tracker
 from fireworks.utilities.fw_utilities import get_fw_logger
+from fireworks.utilities.fw_serializers import recursive_dict
+
 
 __author__ = 'Anubhav Jain'
 __copyright__ = 'Copyright 2013, The Materials Project'
@@ -109,13 +111,13 @@ class LaunchPad(FWSerializable):
     The LaunchPad manages the FireWorks database.
     """
 
-    def __init__(self, host='localhost', port=27017, name='fireworks', username=None, password=None,
+    def __init__(self, host=None, port=None, name=None, username=None, password=None,
                  logdir=None, strm_lvl=None, user_indices=None, wf_user_indices=None, ssl=False,
                  ssl_ca_certs=None, ssl_certfile=None, ssl_keyfile=None, ssl_pem_passphrase=None,
-                 authsource=None):
+                 authsource=None, uri_mode=False):
         """
         Args:
-            host (str): hostname
+            host (str): hostname. If uri_mode is True, a MongoDB connection string URI (https://docs.mongodb.com/manual/reference/connection-string/) can be used instead of the remaining options below.
             port (int): port number
             name (str): database name
             username (str)
@@ -130,10 +132,12 @@ class LaunchPad(FWSerializable):
             ssl_keyfile (str): path to the client private key
             ssl_pem_passphrase (str): passphrase for the client private key
             authsource (str): authsource parameter for MongoDB authentication; defaults to "name" (i.e., db name) if not set
+            uri_mode (bool): if set True, all Mongo connection parameters occur through a MongoDB URI string (set as the host).
         """
-        self.host = host
-        self.port = port
-        self.name = name
+
+        self.host = host if (host or uri_mode) else "localhost"
+        self.port = port if (port or uri_mode) else 27017
+        self.name = name if (name or uri_mode) else "fireworks"
         self.username = username
         self.password = password
         self.ssl = ssl
@@ -141,7 +145,8 @@ class LaunchPad(FWSerializable):
         self.ssl_certfile = ssl_certfile
         self.ssl_keyfile = ssl_keyfile
         self.ssl_pem_passphrase = ssl_pem_passphrase
-        self.authsource = authsource or name
+        self.authsource = authsource or self.name
+        self.uri_mode = uri_mode
 
         # set up logger
         self.logdir = logdir
@@ -152,12 +157,21 @@ class LaunchPad(FWSerializable):
         self.wf_user_indices = wf_user_indices if wf_user_indices else []
 
         # get connection
-        self.connection = MongoClient(host, port, ssl=self.ssl,
-            ssl_ca_certs=self.ssl_ca_certs, ssl_certfile=self.ssl_certfile,
-            ssl_keyfile=self.ssl_keyfile, ssl_pem_passphrase=self.ssl_pem_passphrase,
-            socketTimeoutMS=MONGO_SOCKET_TIMEOUT_MS, username=username, password=password,
-            authSource=self.authsource)
-        self.db = self.connection[name]
+        if uri_mode:
+            self.connection = MongoClient(host)
+            dbname = host.split('/')[-1].split('?')[0]  # parse URI to extract dbname
+            self.db = self.connection[dbname]
+        else:
+            self.connection = MongoClient(self.host, self.port, ssl=self.ssl,
+                                          ssl_ca_certs=self.ssl_ca_certs,
+                                          ssl_certfile=self.ssl_certfile,
+                                          ssl_keyfile=self.ssl_keyfile,
+                                          ssl_pem_passphrase=self.ssl_pem_passphrase,
+                                          socketTimeoutMS=MONGO_SOCKET_TIMEOUT_MS,
+                                          username=self.username,
+                                          password=self.password,
+                                          authsource=self.authsource)
+            self.db = self.connection[self.name]
 
         self.fireworks = self.db.fireworks
         self.launches = self.db.launches
@@ -191,7 +205,8 @@ class LaunchPad(FWSerializable):
             'ssl_certfile': self.ssl_certfile,
             'ssl_keyfile': self.ssl_keyfile,
             'ssl_pem_passphrase': self.ssl_pem_passphrase,
-            'authsource': self.authsource}
+            'authsource': self.authsource,
+            'uri_mode': self.uri_mode}
 
     def update_spec(self, fw_ids, spec_document, mongo=False):
         """
@@ -220,6 +235,10 @@ class LaunchPad(FWSerializable):
 
     @classmethod
     def from_dict(cls, d):
+        port = d.get('port', None)
+        name = d.get('name', None)
+        username = d.get('username', None)
+        password = d.get('password', None)
         logdir = d.get('logdir', None)
         strm_lvl = d.get('strm_lvl', None)
         user_indices = d.get('user_indices', [])
@@ -230,10 +249,11 @@ class LaunchPad(FWSerializable):
         ssl_keyfile = d.get('ssl_keyfile', None)
         ssl_pem_passphrase = d.get('ssl_pem_passphrase', None)
         authsource= d.get('authsource', None)
-        return LaunchPad(d['host'], d['port'], d['name'], d['username'], d['password'],
+        uri_mode = d.get('uri_mode', False)
+        return LaunchPad(d['host'], port, name, username, password,
                          logdir, strm_lvl, user_indices, wf_user_indices, ssl,
                          ssl_ca_certs, ssl_certfile, ssl_keyfile, ssl_pem_passphrase,
-                         authsource)
+                         authsource, uri_mode)
 
     @classmethod
     def auto_load(cls):
@@ -1447,7 +1467,7 @@ class LaunchPad(FWSerializable):
         if recover_launch is not None:
             recovery = self.get_recovery(fw_id, recover_launch)
             recovery.update({'_mode': recover_mode})
-            set_spec = {'$set': {'spec._recovery': recovery}}
+            set_spec = recursive_dict({'$set': {'spec._recovery': recovery}})
             if recover_mode == 'prev_dir':
                 prev_dir = self.get_launch_by_id(recovery.get('_launch_id')).launch_dir
                 set_spec['$set']['spec._launch_dir'] = prev_dir
