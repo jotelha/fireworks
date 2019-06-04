@@ -1,2 +1,4 @@
 __version__ = '1.8.7'
-import testuser
+name="fwtools"
+from fwtools import testuser
+from fwtools import JobAdmin

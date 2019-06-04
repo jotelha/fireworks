@@ -1,4 +1,4 @@
-from fireworks.user_objects.dupefinders.dupefinder_exact import DupeFinderExact
+#from fireworks.user_objects.dupefinders.dupefinder_exact import DupeFinderExact
 from fireworks.user_objects.firetasks.fileio_tasks import FileTransferTask, FileWriteTask
 from fireworks.user_objects.firetasks.script_task import ScriptTask, PyTask
 from fireworks.user_objects.firetasks.templatewriter_task import TemplateWriterTask
@@ -7,6 +7,8 @@ from fireworks import Firework, LaunchPad, Workflow, FWorker, FireTaskBase, FWAc
 import os
 import scipy.constants as C
 import numpy as np
+from fireworks.user_objects.firetasks.jlh_tasks import MakeSegIdSegPdbDictTask
+
 
 def run_replicate(dimensions,surfactants,sf_nmolecules,counterion,preassembly,sb_unit):
     inputs=get_inputs(dimensions,surfactants,sf_nmolecules,counterion,preassembly,sb_unit)
@@ -40,8 +42,10 @@ def get_inputs(dimensions,surfactants,sf_nmolecules,counterion,preassembly,sb_un
     sb_name= 'AU_111_'+dimensions[0]+'x'+dimensions[1]+'x'+dimensions[2]
     system_name=[sf_nmolecules+'_'+surfactants[i]+'_on_'+sb_name+'_'+preassembly[j]  for i in range(len(surfactants))  for j in range(len(preassembly))]
     sb_measures=np.asarray(list(map(int,dimensions)))*np.asarray(list(map(float,sb_unit)))
+    box=[sb_measures[0],sb_measures[1],1.8e-08]
     sb_measures= list(map(str,sb_measures))
     inputs = [dict() for i in range(len(preassembly)*len(surfactants))]
+   
     for i in range(len(surfactants)):
         for j in range(len(preassembly)):
             my_dict={
@@ -53,7 +57,9 @@ def get_inputs(dimensions,surfactants,sf_nmolecules,counterion,preassembly,sb_un
                        "sb_name":sb_name,
                        "sf_nmolecules":sf_nmolecules,
                        "counterion": counterion,
-                       "system_name":system_name[i*len(preassembly)+j]}
+                       "system_name":system_name[i*len(preassembly)+j],
+                       "box": box
+                        }
             inputs[i*len(preassembly)+j]=my_dict
     return inputs
 
@@ -68,7 +74,16 @@ def run_packmol(inputs,nloop,maxit):
         elif "monolayer" in inputs_single["preassembly"]:
             packmol=prepare_packmol(inputs_single,pack_monolayer,nloop,maxit)
         packmol_wfs[i]=packmol
-    return FWAction(detours=packmol_wfs)   
+    return FWAction(detours=packmol_wfs)
+
+def run_prepare_pdb2lmp(inputs):
+    prepare_pdb2lmp_wfs= ['' for x in range((len(inputs)))] 
+    for i in range((len(inputs))):
+        inputs_single=inputs[i]
+        prepare_pdb2lmp_wfs[i]=prepare_pdb2lmp(inputs_single)
+    return FWAction(detours= prepare_pdb2lmp_wfs)
+
+
             
 
 def prepare_packmol(inputs, pack_aggregates, nloop = None, maxit = None ):
@@ -515,6 +530,954 @@ def get_inputs_single(dim_surf_asb, sf_nmolecules, counterion, sb_unit):
                        "sb_name":sb_name,
                        "sf_nmolecules":sf_nmolecules,
                        "counterion": counterion,
-                       "system_name":system_name[i*len(preassembly)+j]}
+                       "system_name":system_name[i*len(preassembly)+j],
+                       "box": box}
             inputs[i*len(preassembly)+j]=my_dict
     return inputs
+
+def prepare_pdb2lmp(inputs):
+        """Processes _sim_df and constructs preassembled surfactant aggregates
+        _sim_df should have the columns
+          surfactant    -- the surfactant's name
+          sf_nmolecules -- the number of surfactant molecules in the system
+          box           -- measures of simulation box in SI units (m)
+          sb_name       -- substrate slab name
+          substrate     -- subsrtate material, i.e. AU
+          counterion    -- counterion, i.e. NA or BR
+          solvent       -- i.e. H2O or water
+          sf_preassembly-- i.e. hemycylinders
+          ci_preassembly-- i.e. at_polar_head
+          sb_crystal_plane i.e. 111
+        """
+
+        sb_name    = inputs["sb_name"]
+
+        surfactant = inputs["surfactant"]
+        sfN        = inputs["sf_nmolecules"]
+        system_name =inputs["system_name"]
+        # make more flexible at some point
+        if surfactant == 'SDS': # surfactant is anionic
+            nanion = 0
+            ncation = sfN
+        else: # CTAB (surfactant is cationic)
+            nanion = sfN
+            ncation = 0
+
+        box_nanometer = np.asarray( inputs["box"] ) / C.nano
+        box_angstrom  = np.asarray( inputs["box"] ) / C.angstrom
+
+        consecutive_fw_list = []
+
+    # pdb to gro
+         #
+    
+        packmol2gmx_get_files_ft = GetFilesTask( {
+                'identifiers':  [  system_name + '_packmol' + '.pdb' ] } )
+        
+        packmol2gmx_get_files_fw = Firework(  packmol2gmx_get_files_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_out":  { "packmol_pdb":  system_name + '_packmol' + '.pdb' },
+                "step"   :     "packmol2gmx_get_files",
+                },
+            name=(system_name + "packmol2gmx_get_files") 
+        )
+        consecutive_fw_list.append(packmol2gmx_get_files_fw)
+        #
+        
+        packmol2gmx_cmd = ' '.join((
+            'module load mdtools;',
+            'pdb_packmol2gmx.sh '+ system_name + '_packmol' + '.pdb' ))
+        
+        packmol2gmx_ft =  ScriptTask.from_str(
+                packmol2gmx_cmd,
+            {
+                'stdout_file':  system_name + '_packmol2gmx' + '.out',
+                'stderr_file':  system_name + '_packmol2gmx' + '.err',
+                'use_shell':    True,
+                'fizzle_bad_rc':True
+            })
+        
+        packmol2gmx_fw = Firework( packmol2gmx_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "_files_in": {"packmol_pdb" : system_name + '_packmol' + '.pdb'},
+                "system_name" : system_name,
+                "_files_out":  { "pdb_for_gmx":  system_name + '.pdb' },
+                "step"   :     "packmol2gmx",
+                },
+            name=(system_name + '_packmol2gmx'),
+            parents=[packmol2gmx_get_files_fw]
+        )
+        consecutive_fw_list.append(packmol2gmx_fw)
+        
+        #
+    
+        packmol2gmx_add_files_ft = AddFilesTask( {
+                'compress':True , 'identifiers':  [  system_name + '.pdb' ], 
+                'paths': [system_name + '.pdb']} )
+        
+        packmol2gmx_add_files_fw = Firework(  packmol2gmx_add_files_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_in":  { "pdb_for_gmx":  system_name + '.pdb' },
+                "step"   :     "packmol2gmx_add_files",
+                },
+            name=(system_name + "packmol2gmx_add_files"),
+            parents=[packmol2gmx_fw]
+       )
+        consecutive_fw_list.append(packmol2gmx_add_files_fw)
+        # 
+
+    # solvate in gromacs:
+        #
+        gmx_solvate_get_files_ft = GetFilesTask( {
+                'identifiers': ['1_{:s}.pdb'.format(surfactant), system_name + '.pdb'] } )
+        
+        gmx_solvate_get_files_fw = Firework(gmx_solvate_get_files_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_out":  { "surfactant_pdb":  '1_{:s}.pdb'.format(surfactant),
+                                "pdb_for_gmx":system_name + '.pdb' },
+                "step"   :     "gmx_solvate_get_files",
+                },
+            name=(system_name + "gmx_solvate_get_files"),
+            parents=[packmol2gmx_add_files_fw]
+        )
+        consecutive_fw_list.append(gmx_solvate_get_files_fw)
+        
+        #
+        gmx_solvate_fill_script_template_ft = TemplateWriterTask( {
+            'context': {
+                'system_name':system_name,
+                'surfactant': surfactant,
+                'ncation':    ncation,
+                'nanion':     nanion,
+                'box':        box_nanometer,
+                'ionize':     False
+            },
+            'template_file': 'gmx_solvate.sh',
+            'output_file':   system_name + '_gmx_solvate' + '.sh'} )
+
+        
+
+        template_gmx2pdb_cmd= ' '.join(('module load gromacs/2018.1-gnu-5.2;',
+                                       'bash '+system_name+'_gmx_solvate'+'.sh'))
+                                       
+        gmx_solvate_ft =  ScriptTask.from_str(template_gmx2pdb_cmd,
+                                             {'stdout_file':  system_name + '_gmx_solvate' + '.out',
+                                              'stderr_file':  system_name + '_gmx_solvate' + '.err',
+                                              'use_shell':    True,
+                                              'fizzle_bad_rc':True} )
+    
+        gmx_solvate_fw = Firework(
+            [
+                gmx_solvate_fill_script_template_ft,
+                gmx_solvate_ft,
+            ],
+            spec={
+                "_category":  "nemo_noqueue",
+                "system_name": system_name,
+                "_files_in":   { "surfactant_pdb":  '1_{:s}.pdb'.format(surfactant),
+                                "pdb_for_gmx":system_name + '.pdb'},
+                "_files_out":  {
+                    "ionized_gro" : "{:s}_solvated.gro".format(system_name)
+                    },
+                "step"   :     "gmx_solvate",
+            },
+            name="{:s}_gmx_solvate".format(system_name),
+            parents=[gmx_solvate_get_files_fw])
+
+        consecutive_fw_list.append(gmx_solvate_fw)   
+        
+        gmx_solvate_add_files_ft = AddFilesTask( {
+                'compress':True , 'identifiers':  [ "{:s}_solvated.gro".format(system_name) ]  ,
+                'paths': ["{:s}_solvated.gro".format(system_name)]} )
+        
+        gmx_solvate_add_files_fw = Firework(gmx_solvate_add_files_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_in":  { "ionized_gro" : "{:s}_solvated.gro".format(system_name) },
+                "step"   :     "gmx_solvate_add_files",
+                },
+            name=(system_name + "gmx_solvate_add_files") ,
+            parents=[gmx_solvate_fw])
+        consecutive_fw_list.append(gmx_solvate_add_files_fw)
+    
+
+    # convert to pdb chunks again
+        gmx2pdb_get_files_ft = GetFilesTask( {
+                'identifiers': [  "{:s}_solvated.gro".format(system_name)],
+                'new_file_names': [  "{:s}_ionized.gro".format(system_name)]})
+        
+        gmx2pdb_get_files_fw = Firework(gmx2pdb_get_files_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_out":  { "ionized_gro" : "{:s}_ionized.gro".format(system_name) },
+                "step"   :     "gmx2pdb_get_files",
+                },
+            name=(system_name + "gmx2pdb_get_files") ,
+            parents=[gmx_solvate_add_files_fw]
+        )
+        consecutive_fw_list.append(gmx2pdb_get_files_fw)
+      
+    
+        pdb_segment_chunk_glob_pattern = '*_[0-9][0-9][0-9].pdb'
+
+        gmx2pdb_fill_script_template_ft = TemplateWriterTask( {
+            'context': {
+                'system_name':  system_name,
+            },
+            'template_file': 'gmx2pdb.sh',
+            'output_file': system_name + '_gmx2pdb' + '.sh'} )
+
+        infile=' '.join((
+            'module load gromacs/2018.1-gnu-5.2 vmd;',
+            'source '+system_name + '_gmx2pdb' + '.sh' ))        
+        gmx2pdb_ft =  ScriptTask.from_str((infile),
+            {
+                'stdout_file':  system_name + '_gmx2pdb' + '.out',
+                'stderr_file':  system_name + '_gmx2pdb' + '.err',
+                'use_shell':    True,
+                'fizzle_bad_rc':True
+            })
+
+        gmx2pdb_tar_ft = ScriptTask.from_str(
+            'tar -czf {:s} {:s}'.format(
+                system_name + '_segments.tar.gz',
+                pdb_segment_chunk_glob_pattern ),
+            {
+                'stdout_file':  system_name + '_gmx2pdb' + '_tar.out',
+                'stderr_file':  system_name + '_gmx2pdb' + '_tar.err',
+                'use_shell':    True,
+                'fizzle_bad_rc':True
+            })
+                ## check
+
+        gmx2pdb_fw = Firework(
+            [   gmx2pdb_fill_script_template_ft,
+                gmx2pdb_ft,
+                gmx2pdb_tar_ft
+            ],
+            spec={
+                "_category":   "nemo_noqueue",
+                "system_name" :system_name,
+                "_files_in":   {
+                    "ionized_gro" : "{:s}_ionized.gro".format(system_name)
+                },
+                "_files_out":  {
+                    "ionized_gro" : "{:s}_ionized.gro".format(system_name),
+                    "segments_tar": "{:s}_segments.tar.gz".format(system_name)
+                                },
+                "step"   :     "gmx2pdb"
+            },
+            name="{:s}_gmx2pdb".format(system_name),
+            parents=[gmx2pdb_get_files_fw])
+
+        consecutive_fw_list.append(gmx2pdb_fw)         
+
+    ### PSFGEN
+    
+    
+    #
+        psfgen_get_files_ft = GetFilesTask( {
+                'identifiers':    ['par_all36_lipid_extended_stripped.prm', 
+                                   'top_all36_lipid_extended_stripped.rtf' ] } )
+    
+    
+        psfgen_get_files_fw = Firework(psfgen_get_files_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_in": {"segments_tar":"{:s}_segments.tar.gz".format(system_name)},
+                "_files_out": {"par_all36":'par_all36_lipid_extended_stripped.prm',
+                               "top_all36":'top_all36_lipid_extended_stripped.rtf',
+                               "tar_gz":"{:s}_segments.tar.gz".format(system_name)},
+                "step"   :     "psfgen_get_files",
+                },
+            name=(system_name + "psfgen_get_files") ,
+            parents=[gmx2pdb_fw]
+        )
+        consecutive_fw_list.append(psfgen_get_files_fw)
+      
+    #
+
+    # make psfgen input
+        psfgen_untar_tf = ScriptTask.from_str('tar -xf {:s}'.format(
+            system_name + '_segments.tar.gz'),
+            {
+                'stdout_file':  system_name + '_psfgen' + '_untar.out',
+                'stderr_file':  system_name + '_psfgen' + '_untar.err',
+                'use_shell':    True,
+                'fizzle_bad_rc':True
+            })
+
+        makeIdPdbDict_ft = MakeSegIdSegPdbDictTask( {
+            'glob_pattern': pdb_segment_chunk_glob_pattern } )
+
+    # get necessary files
+    ## check
+        psfgen_fill_script_template_ft = TemplateWriterTask( {
+            'use_global_spec' : True} )
+
+    # run psfgen
+
+        template_psfgen_cmd  = ' '.join((
+            'module load vmd;',
+            'vmd -e '+ system_name + '_psfgen'+ '.pgn' ))
+        
+        psfgen_ft =  ScriptTask.from_str((template_psfgen_cmd ),
+            {
+                'stdout_file':  system_name + '_psfgen' + '.out',
+                'stderr_file':  system_name + '_psfgen'+ '.err',
+                'use_shell':    True,
+                'fizzle_bad_rc':True
+            })
+
+        psfgen_fw = Firework(
+            [
+                psfgen_untar_tf,
+                makeIdPdbDict_ft,
+                psfgen_fill_script_template_ft,
+                psfgen_ft
+            ],
+            spec={
+                "_category":  "nemo_noqueue",
+                "system_name": system_name,
+                "_files_in":  {
+                    'par_all36':'par_all36_lipid_extended_stripped.prm', 
+                    'top_all36':'top_all36_lipid_extended_stripped.rtf',
+                    'tar_gz':"{:s}_segments.tar.gz".format(system_name)},
+                "_files_out": {
+                    'par_all36':'par_all36_lipid_extended_stripped.prm',
+                    'top_all36':'top_all36_lipid_extended_stripped.rtf',                    
+                    "psfgen_pdb": "{:s}_psfgen.pdb".format(system_name),
+                    "psfgen_psf": "{:s}_psfgen.psf".format(system_name),
+                    "psfgen_pgn": "{:s}_psfgen.pgn".format(system_name)},
+                "step"       : "psfgen",
+                # for the template writer task
+                'context': {
+                    'system_name': system_name
+                },
+                'template_file': 'psfgen.pgn',
+                'output_file':   system_name + '_psfgen' + '.pgn'
+            },
+            name = system_name +'_psfgen',
+            parents=[psfgen_get_files_fw])
+
+        consecutive_fw_list.append(psfgen_fw)
+        
+        #
+        psfgen_add_files_ft=AddFilesTask({'compress':True ,'identifier':["{:s}_psfgen.pdb".format(system_name), 
+                                                                          "{:s}_psfgen.psf".format(system_name), 
+                                                                          system_name + '_psfgen' + '.pgn'],
+                                           'paths': ["{:s}_psfgen.pdb".format(system_name), 
+                                                     "{:s}_psfgen.psf".format(system_name),
+                                                     system_name + '_psfgen' + '.pgn']})
+            
+        psfgen_add_files_fw = Firework( psfgen_add_files_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_in":  {
+                    'par_all36':'par_all36_lipid_extended_stripped.prm',
+                    'top_all36':'top_all36_lipid_extended_stripped.rtf', 
+                    "psfgen_pdb": "{:s}_psfgen.pdb".format(system_name),
+                    "psfgen_psf":  "{:s}_psfgen.psf".format(system_name), 
+                    "psfgen_pgn":  system_name + '_psfgen' + '.pgn'},
+                "_files_out":  {
+                    'par_all36':'par_all36_lipid_extended_stripped.prm',
+                    'top_all36':'top_all36_lipid_extended_stripped.rtf', 
+                    "psfgen_pdb": "{:s}_psfgen.pdb".format(system_name),
+                    "psfgen_psf": "{:s}_psfgen.psf".format(system_name),
+                    "psfgen_pgn":  system_name + '_psfgen' + '.pgn'},
+
+                "step"   :     "psfgen_add_files",
+                },
+            name=(system_name + "psfgen_add_files") ,
+            parents=[psfgen_fw]
+        )
+        consecutive_fw_list.append(psfgen_add_files_fw)
+        
+        #
+        
+
+    # run charmm2lammps
+
+       # ch2lmp_get_files_ft = GetFilesTask( {
+       #        'identifiers':    ['par_all36_lipid_extended_stripped.prm', 
+       #                          'top_all36_lipid_extended_stripped.rtf',
+       #                            "{:s}_psfgen.pdb".format(system_name), 
+       #                            "{:s}_psfgen.psf".format(system_name) ] } )
+        
+        
+       # ch2lmp_get_files_fw = Firework(ch2lmp_get_files_ft,
+       #     spec = {
+       #         "_category":  "nemo_noqueue",
+       #         "system_name" : system_name,
+
+       #         "_files_out": {"par_all36":'par_all36_lipid_extended_stripped.prm', 
+       #                        "top_all36":'top_all36_lipid_extended_stripped.rtf', 
+       #                        "psfgen_pdb":"{:s}_psfgen.pdb".format(system_name),
+       #                        "psfgen_psf":"{:s}_psfgen.psf".format(system_name)},
+       #         "step"   :     "ch2lmp_get_files",
+       #         },
+       #     name=(system_name + "ch2lmp_get_files") ,
+       #     parents=[psfgen_add_files_fw]
+       #)
+       # consecutive_fw_list.append(ch2lmp_get_files_fw)  
+                 
+        
+        template_ch2lmp_cmd  = ' '.join((
+            'module load mdtools;',
+            'charmm2lammps.pl all36_lipid_extended_stripped {system_name:s}_psfgen',
+            '-border=0 -lx={box[0]:.3f} -ly={box[1]:.3f} -lz={box[2]:.3f} ' ))
+        
+        
+        ch2lmp_ft =  ScriptTask.from_str(template_ch2lmp_cmd.format(
+                    system_name = system_name, box = box_angstrom), {
+                'stdout_file':  system_name + '_ch2lmp' + '.out',
+                'stderr_file':  system_name + '_ch2lmp' + '.err',
+                'use_shell':    True,
+                'fizzle_bad_rc':True } )
+
+        # If existent, just deletes existing files
+        file_identifier = "{:s}_psfgen.data".format(system_name)
+
+        #ch2lmp_delete_ft = DeleteFilesTask(
+        #    {
+        #        'identifiers': [file_identifier]
+        #    }
+        #)
+
+
+        ch2lmp_fw = Firework(
+            [
+                ch2lmp_ft
+            ],
+            spec={
+                "_category":   "nemo_noqueue",
+                "system_name": system_name,
+                "_files_in": {
+                    "par_all36":'par_all36_lipid_extended_stripped.prm',
+                    "top_all36":'top_all36_lipid_extended_stripped.rtf',
+                    "psfgen_pdb": "{:s}_psfgen.pdb".format(system_name),
+                    "psfgen_psf": "{:s}_psfgen.psf".format(system_name) },
+                "_files_out": {
+                    "ch2lmp_data": "{:s}_psfgen.data".format(system_name),
+                    "ch2lmp_in": "{:s}_psfgen.in".format(system_name),
+                    "ch2lmp_ctrl_pdb": "{:s}_psfgen_ctrl.pdb".format(system_name),
+                    "ch2lmp_ctrl_psf": "{:s}_psfgen_ctrl.psf".format(system_name)},
+                "step"       : "ch2lmp",
+            },
+            name= system_name + '_ch2lmp',
+            parents=[psfgen_add_files_fw])
+
+        consecutive_fw_list.append(ch2lmp_fw)
+                
+        ch2lmp_store_ft =  AddFilesTask(
+            {
+                'paths':       ["{:s}_psfgen.data".format(system_name),
+                                 "{:s}_psfgen.in".format(system_name),
+                                 "{:s}_psfgen_ctrl.pdb".format(system_name),
+                                 "{:s}_psfgen_ctrl.psf".format(system_name)
+                                  ],
+
+                'identifiers': [ file_identifier,
+                                 "{:s}_psfgen.in".format(system_name),
+                                 "{:s}_psfgen_ctrl.pdb".format(system_name),
+                                 "{:s}_psfgen_ctrl.psf".format(system_name)
+                                 ],
+                'metadata': {
+                    'system_name':          inputs["system_name"],
+                    'sb_name':              inputs["sb_name"],
+                    'surfactant':           inputs["surfactant"],
+                    #'substrate':            inputs["substrate"],
+                    'counterion':           inputs["counterion"],
+                    #'solvent':              inputs["solvent"],
+                    'sf_preassembly':       inputs["preassembly"],
+                    #'ci_preassembly':       inputs["ci_initial_placement"],
+                    #'sb_crystal_plane':     inputs["sb_crystal_plane"]
+                }
+            }
+        )
+        
+        ch2lmp_store_fw = Firework( ch2lmp_store_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "step"   :     "ch2lmp_store",
+                "_files_in": {
+                    "ch2lmp_data": "{:s}_psfgen.data".format(system_name),
+                    "ch2lmp_in": "{:s}_psfgen.in".format(system_name),
+                    "ch2lmp_ctrl_pdb": "{:s}_psfgen_ctrl.pdb".format(system_name),
+                    "ch2lmp_ctrl_psf": "{:s}_psfgen_ctrl.psf".format(system_name)}
+                },
+            name=(system_name + "ch2lmp_store") ,
+            parents=[ch2lmp_fw]
+        )
+        consecutive_fw_list.append(ch2lmp_store_fw )
+
+        parent_links = { consecutive_fw_list[i] : consecutive_fw_list[i+1] \
+                        for i in range(len(consecutive_fw_list)-1) }
+
+        return Workflow( consecutive_fw_list, parent_links,
+            name="{:s}_prep_wf".format(system_name) )
+
+ 
+def run_prepare_pdb2lmp(inputs):
+    prepare_pdb2lmp_wfs= ['' for x in range((len(inputs)))] 
+    for i in range((len(inputs))):
+        inputs_single=inputs[i]
+        prepare_pdb2lmp_wfs[i]=prepare_pdb2lmp(inputs_single)
+    return FWAction(detours= prepare_pdb2lmp_wfs)
+
+def minimize(system_name,
+        lmp_suffix_template='-v baseName {baseName:s} -v dataFile {dataFile:s}'):
+        """
+        Sample for lmp_suffix: for a call like
+            srun lmp -in lmp_minimization.input \
+                -v has_indenter 1 -v robust_minimization 0 -v pbc2d 1 \
+                -v baseName 377_SDS_on_AU_111_51x30x2_monolayer \
+                -v dataFile 377_SDS_on_AU_111_51x30x2_monolayer.lammps
+        set lmp_suffix='-v has_indenter 1 -v robust_minimization 0 -v pbc2d 1 \
+            -v baseName {baseName:s} -v dataFile {dataFile:s}'
+        """
+        
+        consecutive_fw_list = []
+
+        get_input_files_ft = GetFilesTask( {
+                'identifiers':    [ 'lmp_header.input', 
+                                   'lmp_minimization.input',
+                                   'extract_thermo.sh',
+                                   system_name+'_psfgen.data' ] ,
+                'new_file_names': [ 'lmp_header.input',
+                                   'lmp_minimization.input',
+                                   'extract_thermo.sh',
+                                   'datafile.lammps']} )
+        
+        
+        get_input_files_fw = Firework( get_input_files_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_out":  {"lmp_header":'lmp_header.input', 
+                                "lmp_minimization":'lmp_minimization.input', 
+                                "extract_thermo":'extract_thermo.sh', 
+                                "datafile": 'datafile.lammps'},
+                "step"   :     "get_files",
+                },
+            name=(system_name + "get_files") 
+        )
+        consecutive_fw_list.append(get_input_files_fw)
+        
+        
+        lmp_cmd= ' '.join((
+            'module load LAMMPS;',
+            'mpirun ${{MPIRUN_OPTIONS}} lmp -in '+ 'lmp_minimization.input', lmp_suffix_template.format(
+                baseName= system_name, dataFile='datafile.lammps' ) ))
+
+        minimization_ft =  ScriptTask.from_str(
+            lmp_cmd,
+            {
+                'stdout_file':  'lmp_minimization.out',
+                'stderr_file':  'lmp_minimization.err',
+                'use_shell':    True,
+                'fizzle_bad_rc':True
+            })
+
+        extract_thermo_ft =  ScriptTask.from_str(
+            'bash extract_thermo.sh {:s} {:s}'.format(
+                system_name + '_minimization.log',
+                system_name + '_minimization_thermo.out'),
+                {
+                    'use_shell':    True, 'fizzle_bad_rc': False
+                } )
+
+        fw = Firework(
+            [
+                minimization_ft,
+                extract_thermo_ft
+            ],
+            spec={
+                "_category":    "nemo_queue_offline",
+                "_files_in":  {"lmp_header":'lmp_header.input', 
+                                "lmp_minimization":'lmp_minimization.input', 
+                                "extract_thermo":'extract_thermo.sh', 
+                                "datafile": 'datafile.lammps'},
+                "_files_out":  {"lmp_minimized":system_name + '_minimized.lammps'},
+                "system_name": system_name,
+                "step"     : "minimization"
+            },
+            name="{:s}_minimzation".format(system_name),
+            parents=[get_input_files_fw] )
+        
+        consecutive_fw_list.append(fw)
+        
+        add_output_files_ft= AddFilesTask({'compress':True ,
+                                           'identifier': [ system_name + '_minimized.lammps'], 
+                                           'paths': [ system_name + '_minimized.lammps']})
+        
+        
+        add_output_files_fw = Firework(add_output_files_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_in":  { "lmp_minimized":system_name + '_minimized.lammps' },
+                "step"   :     "add_output_files",
+                },
+            name=(system_name + "add_output_files"),
+            parents=[fw]
+       )
+        consecutive_fw_list.append(add_output_files_fw)
+        
+        parent_links = { consecutive_fw_list[i] : consecutive_fw_list[i+1] \
+                        for i in range(len(consecutive_fw_list)-1) }
+
+        return Workflow( consecutive_fw_list, parent_links,
+            name="{:s}_min_wf".format(system_name) )
+
+    
+def nvtEquilibrate(system_name,
+        lmp_suffix_template='-v baseName {baseName:s} -v dataFile {dataFile:s}'):
+        """
+        Sample for lmp_suffix: for a call like
+            srun lmp -in lmp_equilibration_nvt.input \
+                -v has_indenter 0 -v pbc2d 0 -v reinitialize_velocities 1\
+                -v baseName 377_SDS_on_AU_111_51x30x2_monolayer \
+                -v dataFile 377_SDS_on_AU_111_51x30x2_monolayer.lammps
+        set lmp_suffix='-v has_indenter 0 -v reinitialize_velocities 1 \
+            -v baseName {baseName:s} -v dataFile {dataFile:s}'
+        """
+
+        consecutive_fw_list = []
+        
+        get_input_files_ft = GetFilesTask( {
+                'identifiers':    ['lmp_header.input', 
+                                   'lmp_equilibration_nvt.input', 
+                                   'extract_thermo.sh', 
+                                   system_name + '_minimized.lammps'
+                                  ],
+                'new_file_names': ['lmp_header.input', 
+                                   'lmp_equilibration_nvt.input',
+                                   'extract_thermo.sh',
+                                   'datafile.lammps']} )
+        
+        get_input_files_fw = Firework( get_input_files_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_out":  {"lmp_header":'lmp_header.input', 
+                                "lmp_equilibration":'lmp_equilibration.input', 
+                                "extract_thermo":'extract_thermo.sh', 
+                                "datafile": 'datafile.lammps'},
+                "step"   :     "get_files",
+                },
+            name=(system_name + "get_files") 
+        )
+        consecutive_fw_list.append(get_input_files_fw)
+  
+        lmp_cmd = ' '.join((
+            'module load LAMMPS;',
+            'mpirun ${{MPIRUN_OPTIONS}} lmp -in '+ 'lmp_equilibration_nvt.input' , lmp_suffix_template.format(
+                baseName= system_name, dataFile='datafile.lammps' ) ) )
+
+        lmp_ft =  ScriptTask.from_str(
+            lmp_cmd,
+            {
+                'stdout_file':  'lmp_nvtEquilibration.out',
+                'stderr_file':  'lmp_nvtEquilibration.err',
+                'use_shell':    True,
+                'fizzle_bad_rc':True
+            })
+
+        extract_thermo_ft =  ScriptTask.from_str(
+            'bash extract_thermo.sh {:s} {:s}'.format(
+                system_name + '_nvtEquilibration.log',
+                system_name + '_nvtEquilibration_thermo.out'),
+                {
+                    'use_shell':    True, 'fizzle_bad_rc': False
+                } )
+
+        fw = Firework(
+            [
+                lmp_ft,
+                extract_thermo_ft
+            ],
+            spec={
+             
+                "_category":    "nemo_queue_offline",
+                "system_name": system_name,
+                "_files_in":  { "lmp_header":'lmp_header.input', 
+                                "lmp_equilibration":'lmp_equilibration_nvt.input', 
+                                "extract_thermo":'extract_thermo.sh', 
+                                "datafile": 'datafile.lammps'},
+                "_files_out":  {"lmp_nvt": system_name + '_nvtEquilibrated.lammps'},
+                "step"     :   "equilibration_nvt",
+            },
+            name="{:s}_equilibration_nvt".format(system_name),
+            parents=[get_input_files_fw] )
+        
+        
+        consecutive_fw_list.append(fw)
+    
+        add_output_files_ft= AddFilesTask({'compress':True ,
+                                           'identifier': [ system_name + '_nvtEquilibrated.lammps'],
+                                           'paths': [ system_name + '_nvtEquilibrated.lammps']})
+        
+        
+        add_output_files_fw = Firework(add_output_files_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_in":  { "lmp_nvt": system_name + '_nvtEquilibrated.lammps'},
+                "step"   :     "add_output_files",
+                },
+            name=(system_name + "add_output_files"),
+            parents=[fw]
+       )
+        consecutive_fw_list.append(add_output_files_fw)
+        
+        parent_links = { consecutive_fw_list[i] : consecutive_fw_list[i+1] \
+                        for i in range(len(consecutive_fw_list)-1) }
+
+        return Workflow( consecutive_fw_list, parent_links,
+            name="{:s}_nvt_wf".format(system_name) )
+    
+
+
+def nptEquilibrate(system_name,
+        lmp_suffix_template='-v baseName {baseName:s} -v dataFile {dataFile:s}'):
+        """
+        Sample for lmp_suffix: for a call like
+            srun lmp -in lmp_equilibration_npt.input \
+                -v has_indenter 1 -v pbc2d 0 -v reinitialize_velocities 1\
+                -v baseName 377_SDS_on_AU_111_51x30x2_monolayer \
+                -v dataFile 377_SDS_on_AU_111_51x30x2_monolayer.lammps
+        set lmp_suffix='-v has_indenter 1 -v reinitialize_velocities 1 \
+            -v baseName {baseName:s} -v dataFile {dataFile:s}'
+        """
+        consecutive_fw_list = []
+
+        get_input_files_ft = GetFilesTask( {
+                'identifiers':    ['lmp_header.input', 
+                                   'lmp_equilibration_npt.input', 
+                                   'extract_thermo.sh',
+                                   system_name + '_nvtEquilibrated.lammps'
+                                  ],
+                'new_file_names': [ 'lmp_header.input', 
+                                   'lmp_equilibration_npt.input', 
+                                   'extract_thermo.sh',
+                                   'datafile.lammps']} )
+        
+        get_input_files_fw = Firework( get_input_files_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_out":  {"lmp_header":'lmp_header.input', 
+                                "lmp_equilibration":'lmp_equilibration_npt.input', 
+                                "extract_thermo":'extract_thermo.sh',
+                                "datafile": 'datafile.lammps'},
+                "step"   :     "get_files",
+                },
+            name=(system_name + "get_files")
+                                      
+        )
+        consecutive_fw_list.append(get_input_files_fw)
+        
+        lmp_cmd = ' '.join((
+            'module load LAMMPS;',
+            'mpirun ${{MPIRUN_OPTIONS}} lmp -in '+ 'lmp_equilibration_npt.input' , lmp_suffix_template.format(
+                baseName= system_name, dataFile='datafile.lammps' ) ) )
+
+        lmp_ft =  ScriptTask.from_str(
+            lmp_cmd,
+            {
+                'stdout_file':  'lmp_nptEquilibration.out',
+                'stderr_file':  'lmp_nptEquilibration.err',
+                'use_shell':    True,
+                'fizzle_bad_rc':True
+            })
+
+        extract_thermo_ft =  ScriptTask.from_str(
+            'bash extract_thermo.sh {:s} {:s}'.format(
+                system_name + '_nptEquilibration.log',
+                system_name + '_nptEquilibration_thermo.out'),
+                {
+                    'use_shell':    True, 'fizzle_bad_rc': False
+                } )
+
+        fw = Firework(
+            [
+                lmp_ft,
+                extract_thermo_ft
+            ],
+            spec={
+                "_category":   "nemo_queue_offline",
+                "system_name": system_name,
+                "step"     :   "equilibration_npt",
+                "_files_in":  {"lmp_header":'lmp_header.input', 
+                                "lmp_equilibration":'lmp_equilibration_npt.input', 
+                                "extract_thermo":'extract_thermo.sh',
+                                "datafile": 'datafile.lammps'},
+                "_files_out": {"lmp_npt":  system_name + '_nptEquilibrated.lammps'}
+            },
+            name="{:s}_equilibration_npt".format(system_name),
+            parents=[get_input_files_fw])
+        
+        consecutive_fw_list.append(fw)
+        
+        add_output_files_ft= AddFilesTask({'compress':True ,
+                                           'identifier': [ system_name + '_nptEquilibrated.lammps'], 
+                                           'paths': [ system_name + '_nptEquilibrated.lammps']})
+        
+        add_output_files_fw = Firework(add_output_files_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_in":  { "lmp_npt": system_name + '_nptEquilibrated.lammps'},
+                "step"   :     "add_output_files",
+                },
+            name=(system_name + "add_output_files"),
+            parents=[fw]
+       )
+        consecutive_fw_list.append(add_output_files_fw)
+        
+        parent_links = { consecutive_fw_list[i] : consecutive_fw_list[i+1] \
+                        for i in range(len(consecutive_fw_list)-1) }
+
+        return Workflow( consecutive_fw_list, parent_links,
+            name="{:s}_npt_wf".format(system_name) )
+
+def production(system_name,
+        total_steps      = 5000000, # time steps, 5 mio ~ 10 ns
+        lmp_suffix_template=' '.join((
+            '-v baseName {baseName:s} -v dataFile {dataFile:s}',
+            '-v has_indenter 0 -v pbc2d 0 -v mpiio 0 -v use_colvars 0')) ):
+        """
+        Sample for lmp_suffix: for a call like
+            srun lmp -in lmp_production.input \
+                -v has_indenter 0 -v pbc2d 0 -v mpiio 0 \
+                -v thermo_frequency 1000 -v reinitialize_velocities 0 \
+                -v use_colvars 0 -v productionSteps 1000 \
+                -v baseName 377_SDS_on_AU_111_51x30x2_monolayer \
+                -v dataFile 377_SDS_on_AU_111_51x30x2_monolayer.lammps
+        set lmp_suffix='-v has_indenter 0 -v reinitialize_velocities 0 \
+            -v baseName {baseName:s} -v dataFile {dataFile:s} ...'
+        """
+        consecutive_fw_list = []
+        
+        get_input_files_ft = GetFilesTask( {'identifiers':    ['lmp_header.input',
+                                                               'lmp_production.input',
+                                                               'lmp_production_mixed.input',
+                                                               'extract_thermo.sh' , 
+                                                               system_name + '_nptEquilibrated.lammps'],
+                                            'new_file_names': ['lmp_header.input',
+                                                               'lmp_production.input',
+                                                               'lmp_production_mixed.input',
+                                                               'extract_thermo.sh',
+                                                               'datafile.lammps']} )
+        
+        get_input_files_fw = Firework( get_input_files_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_out":  {"lmp_header":'lmp_header.input', 
+                                "lmp_production":'lmp_production.input', 
+                                'lmp_production_mixed':'lmp_production_mixed.input',
+                                "extract_thermo":'extract_thermo.sh',
+                                "datafile": 'datafile.lammps'},
+                "step"   :     "get_files",
+                },
+            name=(system_name + "get_files")
+                                      
+        )
+        consecutive_fw_list.append(get_input_files_fw)
+        
+        
+       
+        lmp_cmd = ' '.join((template_lmp_cmd.format(inputFile = 'lmp_production.input'), 
+                lmp_suffix_template.format(baseName= system_name, dataFile='datafile.lammps' )))
+
+        lmp_ft =  ScriptTask.from_str(
+            lmp_cmd,
+            {
+                'stdout_file':  'lmp_production.out',
+                'stderr_file':  'lmp_production.err',
+                'use_shell':    True,
+                'fizzle_bad_rc':True
+            })
+
+        extract_thermo_ft =  ScriptTask.from_str(
+            'bash extract_thermo.sh {:s} {:s}'.format(
+                system_name + '_production.log',
+                system_name + '_production_thermo.out'),
+                {
+                    'use_shell':    True, 'fizzle_bad_rc': False
+                } )
+
+        fw = Firework(
+            [
+                lmp_ft,
+                extract_thermo_ft,
+                #*tail_ft_list
+            ],
+            spec={
+                "_category":     "nemo_queue_offline",
+                "system_name":    system_name,
+                "_files_in":  {"lmp_header":'lmp_header.input', 
+                                "lmp_production":'lmp_production.input', 
+                                'lmp_production_mixed':'lmp_production_mixed.input',
+                                "extract_thermo":'extract_thermo.sh',
+                                "datafile": 'datafile.lammps'},
+                "step"     :      "production",
+                "total_steps":    total_steps,
+            },
+            name="{:s}_produtcion_{:d}".format(system_name, total_steps) ,
+            parents=[get_input_files_fw])
+        
+        consecutive_fw_list.append(add_output_files_fw)
+        
+        parent_links = { consecutive_fw_list[i] : consecutive_fw_list[i+1] \
+                        for i in range(len(consecutive_fw_list)-1) }
+
+        return Workflow( consecutive_fw_list, parent_links,
+            name="{:s}_production_wf".format(system_name) )
+ 
+def run_minimize(inputs):
+    minimize_wfs= ['' for x in range((len(inputs)))] 
+    lmp_suffix_template= '-v baseName {baseName:s} -v dataFile {dataFile:s} '
+    for i in range((len(inputs))):
+        inputs_single=inputs[i]
+        minimize_wfs[i]=minimize(inputs_single["system_name"],lmp_suffix_template)
+    return FWAction(detours=minimize_wfs )
+
+def run_nvtEquilibrate(inputs):
+    nvtEquilibrate_wfs= ['' for x in range((len(inputs)))] 
+    lmp_suffix_template='-v baseName {baseName:s} -v dataFile {dataFile:s} '
+    for i in range((len(inputs))):
+        inputs_single=inputs[i]
+        minimize_wfs[i]=nvtEquilibrate(inputs_single["system_name"],lmp_suffix_template)
+    return FWAction(detours=nvtEquilibrate_wfs )
+
+def run_nptEquilibrate(inputs):
+    nptEquilibrate_wfs= ['' for x in range((len(inputs)))] 
+    lmp_suffix_template=' '.join((
+        '-v baseName {baseName:s} -v dataFile {dataFile:s} '
+    for i in range((len(inputs))):
+        inputs_single=inputs[i]
+        nptEquilibrate_wfs[i]=nptEquilibrate(inputs_single["system_name"],lmp_suffix_template)
+    return FWAction(detours=nptEquilibrate_wfs )
+
+def production(inputs):
+    production_wfs= ['' for x in range((len(inputs)))] 
+    lmp_suffix_template= '-v baseName {baseName:s} -v dataFile {dataFile:s} '
+    for i in range((len(inputs))):
+        inputs_single=inputs[i]
+        production_wfs[i]=production(inputs_single["system_name"],lmp_suffix_template)
+    return FWAction(detours=production_wfs )
