@@ -18,6 +18,10 @@ import igraph, itertools
 import numpy as np
 from collections.abc import Iterable
 
+# custom jinja2 filters
+import time
+def datetime(format='%Y-%m-%d-%H:%M'):
+    return time.time().strftime(format)
 
 class WorkflowBuilder:
     std_context         = {}
@@ -107,6 +111,8 @@ class WorkflowBuilder:
         self.env = Environment(
           loader=FileSystemLoader(self.template_dir),
           autoescape=select_autoescape(['yaml']))
+        # register filters:
+        self.env.filters['datetime'] = datetime
 
     def render_template(self,template_name,outfile_name,context):
         template = self.env.get_template(template_name)
