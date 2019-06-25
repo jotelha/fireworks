@@ -110,7 +110,8 @@ class WorkflowBuilder:
     def initialize_template_engine(self):
         self.env = Environment(
           loader=FileSystemLoader(self.template_dir),
-          autoescape=select_autoescape(['yaml']))
+          autoescape = False)
+        #  autoescape=select_autoescape(['yaml']))
         # register filters:
         self.env.filters['datetime'] = datetime
 
