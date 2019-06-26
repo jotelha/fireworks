@@ -20,8 +20,11 @@ from collections.abc import Iterable
 
 # custom jinja2 filters
 import time
-def datetime(format='%Y-%m-%d-%H:%M'):
-    return time.strftime(format)
+def datetime(value,format='%Y-%m-%d-%H:%M'):
+    if value == 'now':
+        return time.strftime(format)
+    else:
+        return value.strftime(format)
 
 class WorkflowBuilder:
     std_context         = {}
