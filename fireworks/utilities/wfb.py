@@ -21,7 +21,7 @@ from collections.abc import Iterable
 # custom jinja2 filters
 import time
 def datetime(format='%Y-%m-%d-%H:%M'):
-    return time.time().strftime(format)
+    return time.strftime(format)
 
 class WorkflowBuilder:
     std_context         = {}
