@@ -13,6 +13,9 @@ from jinja2 import Template, Environment, FileSystemLoader
 from jinja2 import select_autoescape, meta
 from fireworks import Firework, Workflow
 
+# logging
+logger = logging.getLogger()
+
 # graphs and datastructures
 import igraph, itertools
 import numpy as np
