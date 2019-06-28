@@ -740,12 +740,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('system-infile',
-        help='.yaml input file.', default='system.yaml')
+        help='.yaml input file.', default='system.yaml', dest='system')
     parser.add_argument('build-dir',
-        help='output directory.', default='build')
+        help='output directory.', default='build', dest='build')
     parser.add_argument('--template-dir',
         help="Directory containing templates.",
-        default="templates")
+        default="templates", dest='templates')
     parser.add_argument('--verbose', '-v', action='store_true',
         help='Make this tool more verbose')
     parser.add_argument('--debug', action='store_true',
@@ -761,14 +761,15 @@ def main():
 
     logging.basicConfig(level=loglevel)
     logger.setLevel(loglevel)
+
     logger.info("Build workflow from system desscription {} within output directory {} based on templates under {}".format(
-        args.system_infile,
-        args.build_dir,
-        args.template_dir ) )
+        args.system,
+        args.build,
+        args.templates ) )
     build_wf(
         args.system,
-        args.build_dir,
-        args.template_dir )
+        args.build,
+        args.templates )
 
 if __name__ == '__main__':
     main()
