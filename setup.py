@@ -56,6 +56,7 @@ if __name__ == "__main__":
                 'mlaunch = fireworks.scripts.mlaunch_run:mlaunch',
                 'qlaunch = fireworks.scripts.qlaunch_run:qlaunch',
                 'rlaunch = fireworks.scripts.rlaunch_run:rlaunch',
+                'wfb     = fireworks.utilities.wfb:main',
                 'render  = fireworks.utilities.render_template:main'
             ]
         }

@@ -683,3 +683,88 @@ class WorkflowBuilder:
                         [ i for i in range(len(vs)) ],
                         vs["name"],
                         *[ vs[a] for a in vs.attribute_names() if a not in exclude ] ) ) ] )
+
+def build_wf(system_infile = 'system.yaml', build_dir = 'build', template_dir ) 'templates'
+    """Build workflow from system .yaml description and set of templates.
+
+    Args:
+        system_infile (str): .yaml description of system. (default: system.yaml)
+        build_dir (str): output directory for rendered templates. (default: build)
+        template_dir (str): directory containing jinja2 template set. (default: templates)
+
+    Returns:
+        Nothing.
+    """
+    wfb = WorkflowBuilder(system_infile)
+    wfb.template_dir = template_dir
+    wfb.build_dir = build_dir
+    wfb.initialize_template_engine()
+    try:
+        undefined_variables_output = wfb.show_undefined_variables()
+    except Exception as e:
+        print(e)
+        error = e
+        raise
+
+    ### Conversion to tree with degenerate vertices
+    wfb.descend()
+    wfb.build_degenerate_graph()
+    show_attributes_output = wfb.show_attributes()
+
+    ## Build Workflow
+    try:
+        wfb.fill_templates()
+    except Exception as e:
+        print(e)
+        error = e
+        raise
+
+    try:
+        wf = wfb.compile_workflow()
+    except Exception as e:
+        print(e)
+        error = e
+        raise
+
+    return
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__,
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('system-infile',
+        help='.yaml input file.', default='system.yaml')
+    parser.add_argument('build-dir',
+        help='output directory.', default='build')
+    parser.add_argument('--template-dir',
+        help="Directory containing templates.",
+        default="templates")
+    parser.add_argument('--verbose', '-v', action='store_true',
+        help='Make this tool more verbose')
+    parser.add_argument('--debug', action='store_true',
+        help='Make this tool print debug info')
+    args = parser.parse_args()
+
+    if args.debug:
+        loglevel = logging.DEBUG
+    elif args.verbose:
+        loglevel = logging.INFO
+    else:
+        loglevel = logging.WARNING
+
+    logger.setLevel(loglevel)
+
+    logger.debug( args )
+
+    logger.info("Build workflow from system desscription {} within output directory {} based on templates under {}".format(
+        args.system_infile,
+        args.build_dir,
+        args.template_dir ) )
+    build_wf(
+        args.system,
+        args.build_dir,
+        args.template_dir )
+
+if __name__ == '__main__':
+    main()
