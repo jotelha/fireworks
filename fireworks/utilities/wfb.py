@@ -684,7 +684,7 @@ class WorkflowBuilder:
                         vs["name"],
                         *[ vs[a] for a in vs.attribute_names() if a not in exclude ] ) ) ] )
 
-def build_wf(system_infile = 'system.yaml', build_dir = 'build', template_dir ) 'templates'
+def build_wf(system_infile = 'system.yaml', build_dir = 'build', template_dir = 'templates'):
     """Build workflow from system .yaml description and set of templates.
 
     Args:
