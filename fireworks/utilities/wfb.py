@@ -14,7 +14,8 @@ from jinja2 import select_autoescape, meta
 from fireworks import Firework, Workflow
 
 # logging
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
+
 
 # graphs and datastructures
 import igraph, itertools
@@ -732,6 +733,8 @@ def build_wf(system_infile = 'system.yaml', build_dir = 'build', template_dir = 
     return
 
 def main():
+    global logger
+
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__,
@@ -756,10 +759,8 @@ def main():
     else:
         loglevel = logging.WARNING
 
+    logging.basicConfig(level=loglevel)
     logger.setLevel(loglevel)
-
-    logger.debug( args )
-
     logger.info("Build workflow from system desscription {} within output directory {} based on templates under {}".format(
         args.system_infile,
         args.build_dir,
