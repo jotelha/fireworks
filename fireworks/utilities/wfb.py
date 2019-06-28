@@ -739,13 +739,13 @@ def main():
 
     parser = argparse.ArgumentParser(description=__doc__,
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('system-infile',
-        help='.yaml input file.', default='system.yaml', dest='system')
-    parser.add_argument('build-dir',
-        help='output directory.', default='build', dest='build')
+    parser.add_argument('system',
+        help='.yaml input file.', default='system.yaml', metavar='system.yaml')
+    parser.add_argument('build',
+        help='output directory.', default='build', metavar='build-directory')
     parser.add_argument('--template-dir',
         help="Directory containing templates.",
-        default="templates", dest='templates')
+        default="templates", dest='templates', metavar='template-directory')
     parser.add_argument('--verbose', '-v', action='store_true',
         help='Make this tool more verbose')
     parser.add_argument('--debug', action='store_true',
