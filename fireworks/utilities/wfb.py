@@ -13,11 +13,22 @@ from jinja2 import Template, Environment, FileSystemLoader
 from jinja2 import select_autoescape, meta
 from fireworks import Firework, Workflow
 
+# logging
+logger = logging.getLogger(__name__)
+
+
 # graphs and datastructures
 import igraph, itertools
 import numpy as np
 from collections.abc import Iterable
 
+# custom jinja2 filters
+import time
+def datetime(value,format='%Y-%m-%d-%H:%M'):
+    if value == 'now':
+        return time.strftime(format)
+    else:
+        return value.strftime(format)
 
 class WorkflowBuilder:
     std_context         = {}
@@ -106,7 +117,10 @@ class WorkflowBuilder:
     def initialize_template_engine(self):
         self.env = Environment(
           loader=FileSystemLoader(self.template_dir),
-          autoescape=select_autoescape(['yaml']))
+          autoescape = False)
+        #  autoescape=select_autoescape(['yaml']))
+        # register filters:
+        self.env.filters['datetime'] = datetime
 
     def render_template(self,template_name,outfile_name,context):
         template = self.env.get_template(template_name)
@@ -673,3 +687,89 @@ class WorkflowBuilder:
                         [ i for i in range(len(vs)) ],
                         vs["name"],
                         *[ vs[a] for a in vs.attribute_names() if a not in exclude ] ) ) ] )
+
+def build_wf(system_infile = 'system.yaml', build_dir = 'build', template_dir = 'templates'):
+    """Build workflow from system .yaml description and set of templates.
+
+    Args:
+        system_infile (str): .yaml description of system. (default: system.yaml)
+        build_dir (str): output directory for rendered templates. (default: build)
+        template_dir (str): directory containing jinja2 template set. (default: templates)
+
+    Returns:
+        Nothing.
+    """
+    wfb = WorkflowBuilder(system_infile)
+    wfb.template_dir = template_dir
+    wfb.build_dir = build_dir
+    wfb.initialize_template_engine()
+    try:
+        undefined_variables_output = wfb.show_undefined_variables()
+    except Exception as e:
+        print(e)
+        error = e
+        raise
+
+    ### Conversion to tree with degenerate vertices
+    wfb.descend()
+    wfb.build_degenerate_graph()
+    show_attributes_output = wfb.show_attributes()
+
+    ## Build Workflow
+    try:
+        wfb.fill_templates()
+    except Exception as e:
+        print(e)
+        error = e
+        raise
+
+    try:
+        wf = wfb.compile_workflow()
+    except Exception as e:
+        print(e)
+        error = e
+        raise
+
+    return
+
+def main():
+    global logger
+
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__,
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('system',
+        help='.yaml input file.', default='system.yaml', metavar='system.yaml')
+    parser.add_argument('build',
+        help='output directory.', default='build', metavar='build-directory')
+    parser.add_argument('--template-dir',
+        help="Directory containing templates.",
+        default="templates", dest='templates', metavar='template-directory')
+    parser.add_argument('--verbose', '-v', action='store_true',
+        help='Make this tool more verbose')
+    parser.add_argument('--debug', action='store_true',
+        help='Make this tool print debug info')
+    args = parser.parse_args()
+
+    if args.debug:
+        loglevel = logging.DEBUG
+    elif args.verbose:
+        loglevel = logging.INFO
+    else:
+        loglevel = logging.WARNING
+
+    logging.basicConfig(level=loglevel)
+    logger.setLevel(loglevel)
+
+    logger.info("Build workflow from system desscription {} within output directory {} based on templates under {}".format(
+        args.system,
+        args.build,
+        args.templates ) )
+    build_wf(
+        args.system,
+        args.build,
+        args.templates )
+
+if __name__ == '__main__':
+    main()
