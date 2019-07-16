@@ -8,7 +8,7 @@ import os
 import scipy.constants as C
 import numpy as np
 from fireworks.user_objects.firetasks.jlh_tasks import MakeSegIdSegPdbDictTask
-
+from fireworks.user_objects.firetasks.jlh_tasks import CmdTask
 
 def run_replicate(dimensions,surfactants,sf_nmolecules,counterion,preassembly,sb_unit):
     inputs=get_inputs(dimensions,surfactants,sf_nmolecules,counterion,preassembly,sb_unit)
@@ -873,7 +873,7 @@ def prepare_pdb2lmp(inputs):
         consecutive_fw_list.append(psfgen_fw)
         
         #
-        psfgen_add_files_ft=AddFilesTask({'compress':True ,'identifier':["{:s}_psfgen.pdb".format(system_name), 
+        psfgen_add_files_ft=AddFilesTask({'compress':True ,'identifiers':["{:s}_psfgen.pdb".format(system_name), 
                                                                           "{:s}_psfgen.psf".format(system_name), 
                                                                           system_name + '_psfgen' + '.pgn'],
                                            'paths': ["{:s}_psfgen.pdb".format(system_name), 
@@ -1052,11 +1052,13 @@ def minimize(system_name,
         consecutive_fw_list = []
 
         get_input_files_ft = GetFilesTask( {
-                'identifiers':    [ 'lmp_header.input', 
-                                   'lmp_minimization.input',
+                'identifiers':    [#'lmp_header.input', 
+                                   'lmp_header_v2.input',
+                                   #'lmp_minimization.input',
+                                   'lmp_minimization_v2.input',
                                    'extract_thermo.sh',
                                    system_name+'_psfgen.data' ] ,
-                'new_file_names': [ 'lmp_header.input',
+                'new_file_names': ['lmp_header.input',
                                    'lmp_minimization.input',
                                    'extract_thermo.sh',
                                    'datafile.lammps']} )
@@ -1069,7 +1071,7 @@ def minimize(system_name,
                 "_files_out":  {"lmp_header":'lmp_header.input', 
                                 "lmp_minimization":'lmp_minimization.input', 
                                 "extract_thermo":'extract_thermo.sh', 
-                                "datafile": 'datafile.lammps'},
+                               "datafile": 'datafile.lammps'},
                 "step"   :     "get_files",
                 },
             name=(system_name + "get_files") 
@@ -1078,8 +1080,8 @@ def minimize(system_name,
         
         
         lmp_cmd= ' '.join((
-            'module load LAMMPS;',
-            'mpirun ${{MPIRUN_OPTIONS}} lmp -in '+ 'lmp_minimization.input', lmp_suffix_template.format(
+            'module load lammps/08May19-git-master-gnu-7.3-openmpi-3.1-colvars-08May19;',
+            'mpirun -n 4 lmp -in '+ 'lmp_minimization.input', lmp_suffix_template.format(
                 baseName= system_name, dataFile='datafile.lammps' ) ))
 
         minimization_ft =  ScriptTask.from_str(
@@ -1093,9 +1095,9 @@ def minimize(system_name,
 
         extract_thermo_ft =  ScriptTask.from_str(
             'bash extract_thermo.sh {:s} {:s}'.format(
-                system_name + '_minimization.log',
+                'log.lammps',
                 system_name + '_minimization_thermo.out'),
-                {
+               {
                     'use_shell':    True, 'fizzle_bad_rc': False
                 } )
 
@@ -1106,11 +1108,16 @@ def minimize(system_name,
             ],
             spec={
                 "_category":    "nemo_queue_offline",
-                "_files_in":  {"lmp_header":'lmp_header.input', 
+                "_queueadapter": {"nodes": 8,
+                                  "ppn": 20,
+                                  "queue": 'nemo_queue_offline',
+                                  "walltime": "96:00:00"},
+                "_files_in":  { "lmp_header":'lmp_header.input',
                                 "lmp_minimization":'lmp_minimization.input', 
                                 "extract_thermo":'extract_thermo.sh', 
                                 "datafile": 'datafile.lammps'},
-                "_files_out":  {"lmp_minimized":system_name + '_minimized.lammps'},
+                "_files_out":  {"lmp_minimized":system_name + '.lammps',
+                                "thermo_out":system_name + "_minimization_thermo.out"},
                 "system_name": system_name,
                 "step"     : "minimization"
             },
@@ -1120,15 +1127,18 @@ def minimize(system_name,
         consecutive_fw_list.append(fw)
         
         add_output_files_ft= AddFilesTask({'compress':True ,
-                                           'identifier': [ system_name + '_minimized.lammps'], 
-                                           'paths': [ system_name + '_minimized.lammps']})
+                                           'identifiers': [ system_name + '_minimized.lammps',
+                                                           system_name + "_minimization_thermo.out"], 
+                                           'paths': [ system_name + '.lammps',
+                                                      system_name + "_minimization_thermo.out"]})
         
         
         add_output_files_fw = Firework(add_output_files_ft,
             spec = {
                 "_category":  "nemo_noqueue",
                 "system_name" : system_name,
-                "_files_in":  { "lmp_minimized":system_name + '_minimized.lammps' },
+                "_files_in":  { "lmp_minimized":system_name + '.lammps',
+                                "thermo_out":system_name + "_minimization_thermo.out"},
                 "step"   :     "add_output_files",
                 },
             name=(system_name + "add_output_files"),
@@ -1159,13 +1169,14 @@ def nvtEquilibrate(system_name,
         
         get_input_files_ft = GetFilesTask( {
                 'identifiers':    ['lmp_header.input', 
-                                   'lmp_equilibration_nvt.input', 
+                                   #'lmp_equilibration_nvt.input', 
+                                   'lmp_equilibration_nvt_v2.input',
                                    'extract_thermo.sh', 
                                    system_name + '_minimized.lammps'
                                   ],
                 'new_file_names': ['lmp_header.input', 
                                    'lmp_equilibration_nvt.input',
-                                   'extract_thermo.sh',
+                                    'extract_thermo.sh',
                                    'datafile.lammps']} )
         
         get_input_files_fw = Firework( get_input_files_ft,
@@ -1173,7 +1184,7 @@ def nvtEquilibrate(system_name,
                 "_category":  "nemo_noqueue",
                 "system_name" : system_name,
                 "_files_out":  {"lmp_header":'lmp_header.input', 
-                                "lmp_equilibration":'lmp_equilibration.input', 
+                                "lmp_equilibration":'lmp_equilibration_nvt.input', 
                                 "extract_thermo":'extract_thermo.sh', 
                                 "datafile": 'datafile.lammps'},
                 "step"   :     "get_files",
@@ -1183,8 +1194,8 @@ def nvtEquilibrate(system_name,
         consecutive_fw_list.append(get_input_files_fw)
   
         lmp_cmd = ' '.join((
-            'module load LAMMPS;',
-            'mpirun ${{MPIRUN_OPTIONS}} lmp -in '+ 'lmp_equilibration_nvt.input' , lmp_suffix_template.format(
+            'module load lammps/08May19-git-master-gnu-7.3-openmpi-3.1-colvars-08May19;',
+            'mpirun -n 4 lmp -in '+ 'lmp_equilibration_nvt.input' , lmp_suffix_template.format(
                 baseName= system_name, dataFile='datafile.lammps' ) ) )
 
         lmp_ft =  ScriptTask.from_str(
@@ -1197,7 +1208,7 @@ def nvtEquilibrate(system_name,
             })
 
         extract_thermo_ft =  ScriptTask.from_str(
-            'bash extract_thermo.sh {:s} {:s}'.format(
+           'bash extract_thermo.sh {:s} {:s}'.format(
                 system_name + '_nvtEquilibration.log',
                 system_name + '_nvtEquilibration_thermo.out'),
                 {
@@ -1212,12 +1223,17 @@ def nvtEquilibrate(system_name,
             spec={
              
                 "_category":    "nemo_queue_offline",
+                "_queueadapter": {"nodes": 8,
+                                  "ppn": 20,
+                                  "queue": 'nemo_queue_offline',
+                                  "walltime": "96:00:00"},
                 "system_name": system_name,
                 "_files_in":  { "lmp_header":'lmp_header.input', 
                                 "lmp_equilibration":'lmp_equilibration_nvt.input', 
                                 "extract_thermo":'extract_thermo.sh', 
                                 "datafile": 'datafile.lammps'},
-                "_files_out":  {"lmp_nvt": system_name + '_nvtEquilibrated.lammps'},
+                "_files_out":  {"lmp_nvt": system_name + '_nvt_Equilibrated.lammps',
+                                "thermo_out": system_name + '_nvtEquilibration_thermo.out'},
                 "step"     :   "equilibration_nvt",
             },
             name="{:s}_equilibration_nvt".format(system_name),
@@ -1227,15 +1243,16 @@ def nvtEquilibrate(system_name,
         consecutive_fw_list.append(fw)
     
         add_output_files_ft= AddFilesTask({'compress':True ,
-                                           'identifier': [ system_name + '_nvtEquilibrated.lammps'],
-                                           'paths': [ system_name + '_nvtEquilibrated.lammps']})
+                                           'identifiers': [ system_name + '_nvtEquilibrated.lammps'],
+                                           'paths': [ system_name + '_nvtEquilibraed.lammps']})
         
         
         add_output_files_fw = Firework(add_output_files_ft,
             spec = {
                 "_category":  "nemo_noqueue",
                 "system_name" : system_name,
-                "_files_in":  { "lmp_nvt": system_name + '_nvtEquilibrated.lammps'},
+                "_files_in":  { "lmp_nvt": system_name + '_nvtEquilibrated.lammps',
+                                "thermo_out": system_name + '_nvtEquilibration_thermo.out'},
                 "step"   :     "add_output_files",
                 },
             name=(system_name + "add_output_files"),
@@ -1266,11 +1283,12 @@ def nptEquilibrate(system_name,
 
         get_input_files_ft = GetFilesTask( {
                 'identifiers':    ['lmp_header.input', 
-                                   'lmp_equilibration_npt.input', 
+                                   #'lmp_equilibration_npt.input',
+                                   'lmp_equilibration_npt_v2.input', 
                                    'extract_thermo.sh',
                                    system_name + '_nvtEquilibrated.lammps'
                                   ],
-                'new_file_names': [ 'lmp_header.input', 
+                'new_file_names': ['lmp_header.input', 
                                    'lmp_equilibration_npt.input', 
                                    'extract_thermo.sh',
                                    'datafile.lammps']} )
@@ -1279,6 +1297,10 @@ def nptEquilibrate(system_name,
             spec = {
                 "_category":  "nemo_noqueue",
                 "system_name" : system_name,
+                "_queueadapter": {"nodes": 8,
+                                  "ppn": 20,
+                                  "queue": 'nemo_queue_offline',
+                                  "walltime": "96:00:00"},
                 "_files_out":  {"lmp_header":'lmp_header.input', 
                                 "lmp_equilibration":'lmp_equilibration_npt.input', 
                                 "extract_thermo":'extract_thermo.sh',
@@ -1291,8 +1313,8 @@ def nptEquilibrate(system_name,
         consecutive_fw_list.append(get_input_files_fw)
         
         lmp_cmd = ' '.join((
-            'module load LAMMPS;',
-            'mpirun ${{MPIRUN_OPTIONS}} lmp -in '+ 'lmp_equilibration_npt.input' , lmp_suffix_template.format(
+            'module load lammps/08May19-git-master-gnu-7.3-openmpi-3.1-colvars-08May19;',
+            'mpirun -n 4 lmp -in '+ 'lmp_equilibration_npt.input' , lmp_suffix_template.format(
                 baseName= system_name, dataFile='datafile.lammps' ) ) )
 
         lmp_ft =  ScriptTask.from_str(
@@ -1325,7 +1347,8 @@ def nptEquilibrate(system_name,
                                 "lmp_equilibration":'lmp_equilibration_npt.input', 
                                 "extract_thermo":'extract_thermo.sh',
                                 "datafile": 'datafile.lammps'},
-                "_files_out": {"lmp_npt":  system_name + '_nptEquilibrated.lammps'}
+                "_files_out": {"lmp_npt":  system_name + '_nptEquilibrated.lammps',
+                               "thermo_out": system_name + '_nptEquilibration_thermo.out'}
             },
             name="{:s}_equilibration_npt".format(system_name),
             parents=[get_input_files_fw])
@@ -1333,14 +1356,15 @@ def nptEquilibrate(system_name,
         consecutive_fw_list.append(fw)
         
         add_output_files_ft= AddFilesTask({'compress':True ,
-                                           'identifier': [ system_name + '_nptEquilibrated.lammps'], 
+                                           'identifiers': [ system_name + '_nptEquilibrated.lammps'], 
                                            'paths': [ system_name + '_nptEquilibrated.lammps']})
         
         add_output_files_fw = Firework(add_output_files_ft,
             spec = {
                 "_category":  "nemo_noqueue",
                 "system_name" : system_name,
-                "_files_in":  { "lmp_npt": system_name + '_nptEquilibrated.lammps'},
+                "_files_in":  { "lmp_npt": system_name + '_nptEquilibrated.lammps',
+                                "thermo_out": system_name + '_nptEquilibration_thermo.out'},
                 "step"   :     "add_output_files",
                 },
             name=(system_name + "add_output_files"),
@@ -1355,7 +1379,493 @@ def nptEquilibrate(system_name,
             name="{:s}_npt_wf".format(system_name) )
 
 def production(system_name,
-        total_steps      = 5000000, # time steps, 5 mio ~ 10 ns
+        total_steps      = 5000000, 
+        lmp_suffix_template=' '.join((
+            '-v baseName {baseName:s} -v dataFile {dataFile:s}',
+            '-v has_indenter 0 -v pbc2d 0 -v mpiio 0 -v use_colvars 0')) ):
+        """
+        Sample for lmp_suffix: for a call like
+            srun lmp -in lmp_production.input \
+                -v has_indenter 0 -v pbc2d 0 -v mpiio 0 \
+                -v thermo_frequency 1000 -v reinitialize_velocities 0 \
+                -v use_colvars 0 -v productionSteps 1000 \
+                -v baseName 377_SDS_on_AU_111_51x30x2_monolayer \
+                -v dataFile 377_SDS_on_AU_111_51x30x2_monolayer.lammps
+        set lmp_suffix='-v has_indenter 0 -v reinitialize_velocities 0 \
+            -v baseName {baseName:s} -v dataFile {dataFile:s} ...'
+        """
+        consecutive_fw_list = []
+        
+        get_input_files_ft = GetFilesTask( {'identifiers':    [#'lmp_header.input',
+                                                               'lmp_header_v2.input',
+                                                               #'lmp_production.input',
+                                                               'lmp_production_v2.input',
+                                                               'extract_thermo.sh' , 
+                                                               system_name + '_nptEquilibrated.lammps'],
+                                            'new_file_names': ['lmp_header.input',
+                                                               'lmp_production.input',
+                                                               'extract_thermo.sh',
+                                                               'datafile.lammps']} )
+        
+        get_input_files_fw = Firework( get_input_files_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_out":  {"lmp_header":'lmp_header.input', 
+                                "lmp_production":'lmp_production.input', 
+                                "extract_thermo":'extract_thermo.sh',
+                                "datafile": 'datafile.lammps'},
+                "step"   :     "get_files",
+                },
+            name=(system_name + "get_files")
+                                      
+        )
+        consecutive_fw_list.append(get_input_files_fw)
+        
+        lmp_cmd = ' '.join((
+            'module load lammps/08May19-git-master-gnu-7.3-openmpi-3.1-colvars-08May19;',
+            'mpirun -n 16 lmp -in '+ 'lmp_production.input' , lmp_suffix_template.format(
+                baseName= system_name, dataFile='datafile.lammps' ) ) )
+
+        lmp_ft =  ScriptTask.from_str(
+            lmp_cmd,
+            {
+                'stdout_file':  'lmp_production.out',
+                'stderr_file':  'lmp_production.err',
+                'use_shell':    True,
+                'fizzle_bad_rc':True
+            })
+
+        extract_thermo_ft =  ScriptTask.from_str(
+            'bash extract_thermo.sh {:s} {:s}'.format(
+                system_name+'_production.log',
+                system_name + '_production_thermo.out'),
+                {
+                    'use_shell':    True, 'fizzle_bad_rc': False
+                } )
+
+        fw = Firework(
+            [
+                lmp_ft,
+                extract_thermo_ft
+                            ],
+            spec={
+                "_category":     "nemo_queue_offline",
+                "_queueadapter": {"nodes": 8,
+                                  "ppn": 20,
+                                  "queue": 'nemo_queue_offline',
+                                  "walltime": "96:00:00"},
+                "system_name":    system_name,
+                "_files_in":  {"lmp_header":'lmp_header.input', 
+                               "lmp_production":'lmp_production.input', 
+                               "extract_thermo":'extract_thermo.sh',
+                               "datafile": 'datafile.lammps'},
+                "step"     :   "production",
+                "total_steps":    total_steps
+            },
+            name="{:s}_produtcion_{:d}".format(system_name, total_steps) ,
+            parents=[get_input_files_fw])
+        
+        consecutive_fw_list.append(fw)
+
+
+        add_output_files_ft= AddFilesTask({'compress': True,
+                                           'identifiers': [ system_name + '_production_thermo.out'],
+                                           'paths': [ system_name + '_production_thermo.out']})
+
+        add_output_files_fw = Firework(add_output_files_ft,
+            spec = {
+                "_category": "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_in": {"thermo_out": system_name + '_production_thermo.out'},
+                "step"   : "add_output_files",
+                },
+            name=(system_name + "add_output_files"),
+            parents=[fw])
+
+        consecutive_fw_list.append(add_output_files_fw)
+        
+        parent_links = { consecutive_fw_list[i] : consecutive_fw_list[i+1] \
+                        for i in range(len(consecutive_fw_list)-1) }
+
+        return Workflow( consecutive_fw_list, parent_links,
+            name="{:s}_production_wf".format(system_name) )
+ 
+def run_minimize(inputs):
+    minimize_wfs= ['' for x in range((len(inputs)))] 
+    lmp_suffix_template= '-v baseName {baseName:s} -v dataFile {dataFile:s} '
+    for i in range((len(inputs))):
+        inputs_single=inputs[i]
+        minimize_wfs[i]=minimize(inputs_single["system_name"],lmp_suffix_template)
+    return FWAction(stored_data={'inputs':inputs}, mod_spec=[{'_set': {'inputs': inputs}}],detours=minimize_wfs )
+
+def run_nvtEquilibrate(inputs):
+    nvtEquilibrate_wfs= ['' for x in range((len(inputs)))] 
+    lmp_suffix_template='-v baseName {baseName:s} -v dataFile {dataFile:s} '
+    for i in range((len(inputs))):
+        inputs_single=inputs[i]
+        nvtEquilibrate_wfs[i]=nvtEquilibrate(inputs_single["system_name"],lmp_suffix_template)
+    return FWAction(stored_data={'inputs':inputs}, mod_spec=[{'_set': {'inputs': inputs}}],detours=nvtEquilibrate_wfs )
+
+def run_nptEquilibrate(inputs):
+    nptEquilibrate_wfs= ['' for x in range((len(inputs)))] 
+    lmp_suffix_template='-v baseName {baseName:s} -v dataFile {dataFile:s} '
+    for i in range((len(inputs))):
+        inputs_single=inputs[i]
+        nptEquilibrate_wfs[i]=nptEquilibrate(inputs_single["system_name"],lmp_suffix_template)
+    return FWAction(stored_data={'inputs':inputs}, mod_spec=[{'_set': {'inputs': inputs}}], detours=nptEquilibrate_wfs )
+
+def run_production(inputs):
+    production_wfs= ['' for x in range((len(inputs)))] 
+    lmp_suffix_template= '-v baseName {baseName:s} -v dataFile {dataFile:s} '
+    for i in range((len(inputs))):
+        inputs_single=inputs[i]
+        production_wfs[i]=production(inputs_single["system_name"],5000000,lmp_suffix_template)
+    return FWAction(detours=production_wfs )
+
+
+def minimize_cmd(system_name,
+        lmp_suffix_template='-v baseName {baseName:s} -v dataFile {dataFile:s}'):
+        """
+        Sample for lmp_suffix: for a call like
+            srun lmp -in lmp_minimization.input \
+                -v has_indenter 1 -v robust_minimization 0 -v pbc2d 1 \
+                -v baseName 377_SDS_on_AU_111_51x30x2_monolayer \
+                -v dataFile 377_SDS_on_AU_111_51x30x2_monolayer.lammps
+        set lmp_suffix='-v has_indenter 1 -v robust_minimization 0 -v pbc2d 1 \
+            -v baseName {baseName:s} -v dataFile {dataFile:s}'
+        """
+        
+        consecutive_fw_list = []
+
+        get_input_files_ft = GetFilesTask( {
+                'identifiers':    ['lmp_header.input', 
+                                   'lmp_minimization.input',
+                                   'extract_thermo.sh',
+                                   system_name+'_psfgen.data' ] ,
+                'new_file_names': ['lmp_header.input',
+                                   'lmp_minimization.input',
+                                   'extract_thermo.sh',
+                                   'datafile.lammps']} )
+        
+        
+        get_input_files_fw = Firework( get_input_files_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_out":  {"lmp_header":'lmp_header.input', 
+                                "lmp_minimization":'lmp_minimization.input', 
+                                "extract_thermo":'extract_thermo.sh', 
+                               "datafile": 'datafile.lammps'},
+                "step"   :     "get_files",
+                },
+            name=(system_name + "get_files") 
+        )
+        consecutive_fw_list.append(get_input_files_fw)
+                
+        minimization_ft=CmdTask({'cmd': 'lmp',
+                                 'opt':
+                                 ['-in lmp_minimization.input',
+                                  '-v baseName '+ system_name,
+                                  '-v dataFile '+ 'datafile.lammps'
+                                 ],
+                                 'stdout_file':  'lmp_minimization.out',
+                                 'stderr_file':  'lmp_minimization.err',
+                                 'use_shell':    True,
+                                 'fizzle_bad_rc':True
+                                })
+
+        extract_thermo_ft =  CmdTask({'cmd': 'extract_thermo.sh',
+                                      'opt':
+                                      ['log.lammps',
+                                       system_name + '_minimization_thermo.out'],
+                                      'stderr_file':'extract_thermo.err',
+                                      'stdout_file':'extract_thermo.out',
+                                      'fizzle_bad_rc':'false',
+                                      'use_shell':'true'
+                                     })      
+               
+        fw = Firework(
+            [
+                minimization_ft,
+                extract_thermo_ft
+            ],
+            spec={
+                "_category":   "nemo_queue_offline",
+                "_queueadapter": {"nodes": 8,
+                                  "ppn": 20,
+                                  "queue": 'nemo_queue_offline',
+                                  "walltime": "96:00:00"},
+                "_files_in":  {"lmp_header":'lmp_header.input', 
+                                "lmp_minimization":'lmp_minimization.input', 
+                                "extract_thermo":'extract_thermo.sh', 
+                                "datafile": 'datafile.lammps'},
+                "_files_out":  {"lmp_minimized":system_name + '.lammps',
+                                "thermo_out": system_name + '_minimization_thermo.out'},
+                "system_name": system_name,
+                "step"     : "minimization"
+            },
+            name="{:s}_minimzation".format(system_name),
+            parents=[get_input_files_fw] )
+        
+        consecutive_fw_list.append(fw)
+        
+        add_output_files_ft= AddFilesTask({'compress':True ,
+                                           'identifiers': [ system_name + '_minimized.lammps',
+                                                           system_name + '_minimization_thermo.out'], 
+                                           'paths': [ system_name + '.lammps',
+                                                      system_name + '_minimization_thermo.out']})
+        
+        
+        add_output_files_fw = Firework(add_output_files_ft,
+            spec = {
+                "_category": "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_in":  { "lmp_minimized":system_name + '.lammps',
+                                "thermo_out": system_name + '_minimization_thermo.out' },
+                "step"   :     "add_output_files",
+                },
+            name=(system_name + "add_output_files"),
+            parents=[fw]
+       )
+        consecutive_fw_list.append(add_output_files_fw)
+        
+        parent_links = { consecutive_fw_list[i] : consecutive_fw_list[i+1] \
+                        for i in range(len(consecutive_fw_list)-1) }
+
+        return Workflow( consecutive_fw_list, parent_links,
+            name="{:s}_min_wf".format(system_name) )
+
+    
+def nvtEquilibrate_cmd(system_name,
+        lmp_suffix_template='-v baseName {baseName:s} -v dataFile {dataFile:s}'):
+        """
+        Sample for lmp_suffix: for a call like
+            srun lmp -in lmp_equilibration_nvt.input \
+                -v has_indenter 0 -v pbc2d 0 -v reinitialize_velocities 1\
+                -v baseName 377_SDS_on_AU_111_51x30x2_monolayer \
+                -v dataFile 377_SDS_on_AU_111_51x30x2_monolayer.lammps
+        set lmp_suffix='-v has_indenter 0 -v reinitialize_velocities 1 \
+            -v baseName {baseName:s} -v dataFile {dataFile:s}'
+        """
+
+        consecutive_fw_list = []
+        
+        get_input_files_ft = GetFilesTask( {
+                'identifiers':    ['lmp_header.input', 
+                                   'lmp_equilibration_nvt.input', 
+                                   'extract_thermo.sh', 
+                                   system_name + '_minimized.lammps'
+                                  ],
+                'new_file_names': ['lmp_header.input', 
+                                   'lmp_equilibration_nvt.input',
+                                   'extract_thermo.sh',
+                                   'datafile.lammps']} )
+        
+        get_input_files_fw = Firework( get_input_files_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_out":  {"lmp_header":'lmp_header.input', 
+                                "lmp_equilibration":'lmp_equilibration_nvt.input', 
+                                "extract_thermo":'extract_thermo.sh', 
+                                "datafile": 'datafile.lammps'},
+                "step"   :     "get_files",
+                },
+            name=(system_name + "get_files") 
+        )
+        consecutive_fw_list.append(get_input_files_fw)
+        
+        
+        lmp_ft=CmdTask({'cmd': 'lmp',
+                                 'opt':
+                                 ['-in lmp_equilibration_nvt.input',
+                                  '-v baseName '+ system_name,
+                                  '-v dataFile '+ 'datafile.lammps'
+                                  ],
+                                 'stdout_file':  'lmp_nvtEquilibration.out',
+                                 'stderr_file':  'lmp_nvtEquilibration.err',
+                                 'use_shell':    True,
+                                 'fizzle_bad_rc':True
+                                })
+
+        extract_thermo_ft =  CmdTask({'cmd': 'extract_thermo.sh',
+                                      'opt':
+                                      [system_name+"_nvtEquilibration.log",
+                                       system_name + '_nvtEquilibration_thermo.out'],
+                                      'stderr_file':'extract_thermo.err',
+                                      'stdout_file':'extract_thermo.out',
+                                      'fizzle_bad_rc':'false',
+                                      'use_shell':'true'
+                                     })      
+
+        fw = Firework(
+            [
+                lmp_ft,
+                extract_thermo_ft
+            ],
+            spec={
+             
+                "_category":    "nemo_queue_offline",
+                "system_name": system_name,
+                "_queueadapter": {"nodes": 8,
+                                  "ppn": 20,
+                                  "queue": 'nemo_queue_offline',
+                                  "walltime": "96:00:00"},
+                "_files_in":  { "lmp_header":'lmp_header.input', 
+                                "lmp_equilibration":'lmp_equilibration_nvt.input', 
+                                "extract_thermo":'extract_thermo.sh', 
+                                "datafile": 'datafile.lammps'},
+                "_files_out":  {"lmp_nvt": system_name + '_nvtEquilibrated.lammps',
+                                "thermo_out": system_name + '_nvtEquilibration_thermo.out'},
+                "step"     :   "equilibration_nvt"
+            },
+            name="{:s}_equilibration_nvt".format(system_name),
+            parents=[get_input_files_fw] )
+        
+        
+        consecutive_fw_list.append(fw)
+    
+        add_output_files_ft= AddFilesTask({'compress':True ,
+                                           'identifiers': [ system_name + '_nvtEquilibrated.lammps',
+                                                           system_name + '_nvtEquilibration_thermo.out'],
+                                           'paths': [ system_name + '_nvtEquilibrated.lammps',
+                                                      system_name + '_nvtEquilibration_thermo.out']})
+        
+        
+        add_output_files_fw = Firework(add_output_files_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_in":  {"lmp_nvt": system_name + '_nvtEquilibrated.lammps',
+                               "thermo_out": system_name + '_nvtEquilibration_thermo.out'},
+                "step"   :     "add_output_files",
+                },
+            name=(system_name + "add_output_files"),
+            parents=[fw]
+       )
+        consecutive_fw_list.append(add_output_files_fw)
+        
+        parent_links = { consecutive_fw_list[i] : consecutive_fw_list[i+1] \
+                        for i in range(len(consecutive_fw_list)-1) }
+
+        return Workflow( consecutive_fw_list, parent_links,
+            name="{:s}_nvt_wf".format(system_name) )
+    
+
+
+def nptEquilibrate_cmd(system_name,
+        lmp_suffix_template='-v baseName {baseName:s} -v dataFile {dataFile:s}'):
+        """
+        Sample for lmp_suffix: for a call like
+            srun lmp -in lmp_equilibration_npt.input \
+                -v has_indenter 1 -v pbc2d 0 -v reinitialize_velocities 1\
+                -v baseName 377_SDS_on_AU_111_51x30x2_monolayer \
+                -v dataFile 377_SDS_on_AU_111_51x30x2_monolayer.lammps
+        set lmp_suffix='-v has_indenter 1 -v reinitialize_velocities 1 \
+            -v baseName {baseName:s} -v dataFile {dataFile:s}'
+        """
+        consecutive_fw_list = []
+
+        get_input_files_ft = GetFilesTask( {
+                'identifiers':    ['lmp_header.input', 
+                                   'lmp_equilibration_npt.input', 
+                                   'extract_thermo.sh',
+                                   system_name + '_nvtEquilibrated.lammps'
+                                  ],
+                'new_file_names': ['lmp_header.input', 
+                                   'lmp_equilibration_npt.input', 
+                                   'extract_thermo.sh',
+                                   'datafile.lammps']} )
+        
+        get_input_files_fw = Firework( get_input_files_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_out":  {"lmp_header":'lmp_header.input', 
+                                "lmp_equilibration":'lmp_equilibration_npt.input', 
+                                "extract_thermo":'extract_thermo.sh',
+                                "datafile": 'datafile.lammps'},
+                "step"   :     "get_files",
+                },
+            name=(system_name + "get_files")
+                                      
+        )
+        consecutive_fw_list.append(get_input_files_fw)
+        
+        
+        lmp_ft=CmdTask({'cmd': 'lmp',
+                        'opt':
+                        ['-in lmp_equilibration_npt.input',
+                         '-v baseName '+ system_name,
+                         '-v dataFile '+ 'datafile.lammps'],
+                        'stdout_file':  'lmp_nptEquilibration.out',
+                        'stderr_file':  'lmp_nptEquilibration.err',
+                        'use_shell':    True,
+                        'fizzle_bad_rc':True
+                       })
+
+        extract_thermo_ft =  CmdTask({'cmd': 'extract_thermo.sh',
+                                      'opt':
+                                      [system_name + '_nptEquilibration.log',
+                                       system_name + '_nptEquilibration_thermo.out'],
+                                      'stderr_file':'extract_thermo.err',
+                                      'stdout_file':'extract_thermo.out',
+                                      'fizzle_bad_rc':'false',
+                                      'use_shell':'true'
+                                     })      
+        fw = Firework(
+            [
+                lmp_ft,
+                extract_thermo_ft
+            ],
+            spec={
+                "_category": "nemo_queue_offline",
+                "system_name": system_name,
+                "_queueadapter": {"nodes": 8,
+                                  "ppn": 20,
+                                  "queue": 'nemo_queue_offline',
+                                  "walltime": "96:00:00"},
+                "step"     :   "equilibration_npt",
+                "_files_in":  { "lmp_header":'lmp_header.input', 
+                                "lmp_equilibration":'lmp_equilibration_npt.input', 
+                                "extract_thermo":'extract_thermo.sh',
+                                "datafile": 'datafile.lammps'},
+                "_files_out": {"lmp_npt":  system_name + '_npt_Equilibrated.lammps',
+                               "thermo_out": system_name + '_nptEquilibration_thermo.out'}
+            },
+            name="{:s}_equilibration_npt".format(system_name),
+            parents=[get_input_files_fw])
+        
+        consecutive_fw_list.append(fw)
+        
+        add_output_files_ft= AddFilesTask({'compress':True ,
+                                           'identifiers': [ system_name + '_nptEquilibrated.lammps',
+                                                           system_name + '_nptEquilibration_thermo.out'], 
+                                           'paths': [ system_name + '_nptEquilibrated.lammps',
+                                                      system_name + '_nptEquilibration_thermo.out']})
+        
+        add_output_files_fw = Firework(add_output_files_ft,
+            spec = {
+                "_category":  "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_in":  { "lmp_npt": system_name + '_nptEquilibrated.lammps',
+                                "thermo_out": system_name + '_nptEquilibration_thermo.out'},
+                "step"   :     "add_output_files",
+                },
+            name=(system_name + "add_output_files"),
+            parents=[fw]
+       )
+        consecutive_fw_list.append(add_output_files_fw)
+        
+        parent_links = { consecutive_fw_list[i] : consecutive_fw_list[i+1] \
+                        for i in range(len(consecutive_fw_list)-1) }
+
+        return Workflow( consecutive_fw_list, parent_links,
+            name="{:s}_npt_wf".format(system_name) )
+
+def production_cmd(system_name,
+        total_steps      = 5000000, 
         lmp_suffix_template=' '.join((
             '-v baseName {baseName:s} -v dataFile {dataFile:s}',
             '-v has_indenter 0 -v pbc2d 0 -v mpiio 0 -v use_colvars 0')) ):
@@ -1374,12 +1884,10 @@ def production(system_name,
         
         get_input_files_ft = GetFilesTask( {'identifiers':    ['lmp_header.input',
                                                                'lmp_production.input',
-                                                               'lmp_production_mixed.input',
                                                                'extract_thermo.sh' , 
                                                                system_name + '_nptEquilibrated.lammps'],
                                             'new_file_names': ['lmp_header.input',
                                                                'lmp_production.input',
-                                                               'lmp_production_mixed.input',
                                                                'extract_thermo.sh',
                                                                'datafile.lammps']} )
         
@@ -1389,95 +1897,138 @@ def production(system_name,
                 "system_name" : system_name,
                 "_files_out":  {"lmp_header":'lmp_header.input', 
                                 "lmp_production":'lmp_production.input', 
-                                'lmp_production_mixed':'lmp_production_mixed.input',
                                 "extract_thermo":'extract_thermo.sh',
                                 "datafile": 'datafile.lammps'},
-                "step"   :     "get_files",
+                "step"   :     "get_files"
                 },
             name=(system_name + "get_files")
                                       
         )
         consecutive_fw_list.append(get_input_files_fw)
-        
-        
-       
-        lmp_cmd = ' '.join((template_lmp_cmd.format(inputFile = 'lmp_production.input'), 
-                lmp_suffix_template.format(baseName= system_name, dataFile='datafile.lammps' )))
+                  
+        lmp_ft=CmdTask({'cmd': 'lmp',
+                                 'opt':
+                                 ['-in lmp_production.input',
+                                  '-v baseName '+ system_name,
+                                  '-v dataFile '+ 'datafile.lammps',
+                                  '-v restartFile default.mpiio.restart'
+                                  ],
+                                 'stdout_file':  'lmp_production.out',
+                                 'stderr_file':  'lmp_production.err',
+                                 'use_shell':    True,
+                                 'fizzle_bad_rc':True
+                                })
 
-        lmp_ft =  ScriptTask.from_str(
-            lmp_cmd,
-            {
-                'stdout_file':  'lmp_production.out',
-                'stderr_file':  'lmp_production.err',
-                'use_shell':    True,
-                'fizzle_bad_rc':True
-            })
+        extract_thermo_ft =  CmdTask({'cmd': 'extract_thermo.sh',
+                                      'opt':
+                                      [system_name+'_production.log',
+                                       system_name + '_production_thermo.out'],
+                                      'stderr_file':'extract_thermo.err',
+                                      'stdout_file':'extract_thermo.out',
+                                      'fizzle_bad_rc':'false',
+                                      'use_shell':'true'
+                                     })     
 
-        extract_thermo_ft =  ScriptTask.from_str(
-            'bash extract_thermo.sh {:s} {:s}'.format(
-                system_name + '_production.log',
-                system_name + '_production_thermo.out'),
-                {
-                    'use_shell':    True, 'fizzle_bad_rc': False
-                } )
-
+                                     
         fw = Firework(
             [
                 lmp_ft,
-                extract_thermo_ft,
-                #*tail_ft_list
+                extract_thermo_ft
+
             ],
             spec={
                 "_category":     "nemo_queue_offline",
                 "system_name":    system_name,
+                "_queueadapter": {"nodes": 8,
+                                  "ppn": 20,
+                                  "queue": 'nemo_queue_offline' ,
+                                  "walltime": "96:00:00"},
+                "_files_in":  {"lmp_header":'lmp_header.input',
+                               "lmp_production":'lmp_production.input',
+                               "extract_thermo":'extract_thermo.sh',
+                               "datafile": 'datafile.lammps'},
+                "_files_out": {"thermo:out": system_name + '_production_thermo.out'},
+                "step"     :   "production",
+                "total_steps":    total_steps
+            },
+            name="{:s}_produtcion_{:d}".format(system_name, total_steps) ,
+            parents=[get_input_files_fw])
+
+        consecutive_fw_list.append(fw)
+
+
+        add_output_files_ft= AddFilesTask({'compress': True,
+                                           'identifiers': [ system_name + '_production_thermo.out'],
+                                           'paths': [ system_name + '_production_thermo.out']})
+
+        add_output_files_fw = Firework(add_output_files_ft,
+            spec = {
+                "_category": "nemo_noqueue",
                 "_files_in":  {"lmp_header":'lmp_header.input', 
-                                "lmp_production":'lmp_production.input', 
-                                'lmp_production_mixed':'lmp_production_mixed.input',
-                                "extract_thermo":'extract_thermo.sh',
-                                "datafile": 'datafile.lammps'},
-                "step"     :      "production",
-                "total_steps":    total_steps,
+                               "lmp_production":'lmp_production.input', 
+                               "extract_thermo":'extract_thermo.sh',
+                               "datafile": 'datafile.lammps'},
+                "_files_out": {"thermo:out": system_name + '_production_thermo.out'},
+                "step"     :   "production",
+                "total_steps":    total_steps
             },
             name="{:s}_produtcion_{:d}".format(system_name, total_steps) ,
             parents=[get_input_files_fw])
         
+        consecutive_fw_list.append(fw)        
+
+
+        add_output_files_ft= AddFilesTask({'compress': True,
+                                           'identifiers': [ system_name + '_production_thermo.out'],
+                                           'paths': [ system_name + '_production_thermo.out']})
+
+        add_output_files_fw = Firework(add_output_files_ft,
+            spec = {
+                "_category": "nemo_noqueue",
+                "system_name" : system_name,
+                "_files_in": {"thermo_out": system_name + '_production_thermo.out'},
+                "step"   : "add_output_files",
+                },
+            name=(system_name + "add_output_files"),
+            parents=[fw])
         consecutive_fw_list.append(add_output_files_fw)
-        
+
         parent_links = { consecutive_fw_list[i] : consecutive_fw_list[i+1] \
                         for i in range(len(consecutive_fw_list)-1) }
 
         return Workflow( consecutive_fw_list, parent_links,
             name="{:s}_production_wf".format(system_name) )
- 
-def run_minimize(inputs):
+
+
+def run_minimize_cmd(inputs):
     minimize_wfs= ['' for x in range((len(inputs)))] 
     lmp_suffix_template= '-v baseName {baseName:s} -v dataFile {dataFile:s} '
     for i in range((len(inputs))):
         inputs_single=inputs[i]
-        minimize_wfs[i]=minimize(inputs_single["system_name"],lmp_suffix_template)
-    return FWAction(detours=minimize_wfs )
+        minimize_wfs[i]=minimize_cmd(inputs_single["system_name"],lmp_suffix_template)
+    return FWAction(stored_data={'inputs':inputs}, mod_spec=[{'_set': {'inputs': inputs}}],detours=minimize_wfs )
 
-def run_nvtEquilibrate(inputs):
+def run_nvtEquilibrate_cmd(inputs):
     nvtEquilibrate_wfs= ['' for x in range((len(inputs)))] 
     lmp_suffix_template='-v baseName {baseName:s} -v dataFile {dataFile:s} '
     for i in range((len(inputs))):
         inputs_single=inputs[i]
-        minimize_wfs[i]=nvtEquilibrate(inputs_single["system_name"],lmp_suffix_template)
-    return FWAction(detours=nvtEquilibrate_wfs )
+        nvtEquilibrate_wfs[i]=nvtEquilibrate_cmd(inputs_single["system_name"],lmp_suffix_template)
+    return FWAction(stored_data={'inputs':inputs}, mod_spec=[{'_set': {'inputs': inputs}}],detours=nvtEquilibrate_wfs )
 
-def run_nptEquilibrate(inputs):
+def run_nptEquilibrate_cmd(inputs):
     nptEquilibrate_wfs= ['' for x in range((len(inputs)))] 
-    lmp_suffix_template=' '.join((
-        '-v baseName {baseName:s} -v dataFile {dataFile:s} '
+    lmp_suffix_template='-v baseName {baseName:s} -v dataFile {dataFile:s} '
     for i in range((len(inputs))):
         inputs_single=inputs[i]
-        nptEquilibrate_wfs[i]=nptEquilibrate(inputs_single["system_name"],lmp_suffix_template)
-    return FWAction(detours=nptEquilibrate_wfs )
+        nptEquilibrate_wfs[i]=nptEquilibrate_cmd(inputs_single["system_name"],lmp_suffix_template)
+    return FWAction(stored_data={'inputs':inputs}, mod_spec=[{'_set': {'inputs': inputs}}],detours=nptEquilibrate_wfs )
 
-def production(inputs):
+def run_production_cmd(inputs):
     production_wfs= ['' for x in range((len(inputs)))] 
     lmp_suffix_template= '-v baseName {baseName:s} -v dataFile {dataFile:s} '
     for i in range((len(inputs))):
         inputs_single=inputs[i]
-        production_wfs[i]=production(inputs_single["system_name"],lmp_suffix_template)
-    return FWAction(detours=production_wfs )
+        production_wfs[i]=production_cmd(inputs_single["system_name"],5000000,lmp_suffix_template)
+    return FWAction(stored_data={'inputs':inputs}, mod_spec=[{'_set': {'inputs': inputs}}],detours=production_wfs )
+
