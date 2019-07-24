@@ -113,8 +113,8 @@ class GetFilesByQueryTask(FiretaskBase):
         dest_dir = self.get("dest_dir", os.path.abspath("."))
         new_file_names = self.get("new_file_names", [])
         query = self.get("query", {})
-        sort_key = self.get("query", None)
-        sort_direction = self.get("query", pymongo.DESCENDING)
+        sort_key = self.get("sort_key", None)
+        sort_direction = self.get("sort_direction", pymongo.DESCENDING)
         limit = self.get("limit",None)
 
         # convert nested dicts to MongoDB query, i.e.
