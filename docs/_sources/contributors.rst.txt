@@ -45,6 +45,8 @@ Additional contributions from:
 * Matt Henderson
 * Steven Torrisi
 * Eli Ateljevich
+* Martin Siron
+* Johannes Hörmann
 * Github user: kpoman
 * Github user: jakirkham
 * Github user: shenjh

@@ -1099,7 +1099,8 @@ class LaunchPad(FWSerializable):
         self.complete_launch(launch_id, state='FIZZLED')
 
     def detect_lostruns(self, expiration_secs=RUN_EXPIRATION_SECS, fizzle=False, rerun=False,
-                        max_runtime=None, min_runtime=None, refresh=False, query=None):
+                        max_runtime=None, min_runtime=None, refresh=False, query=None,
+                        launch_query=None):
         """
         Detect lost runs i.e running fireworks that haven't been updated within the specified
         time limit or running firework whose launch has been marked fizzed or completed.
@@ -1112,6 +1113,7 @@ class LaunchPad(FWSerializable):
             min_runtime (seconds): minimum run time
             refresh (bool): if True, refresh the workflow with inconsistent fireworks.
             query (dict): restrict search to FWs matching this query
+            launch_query (dict): restrict search to launches matching this query (e.g. host restriction)
 
         Returns:
             ([int], [int], [int]): tuple of list of lost launch ids, lost firework ids and
@@ -1123,14 +1125,13 @@ class LaunchPad(FWSerializable):
         now_time = datetime.datetime.utcnow()
         cutoff_timestr = (now_time - datetime.timedelta(seconds=expiration_secs)).isoformat()
 
-        lostruns_query = {'state': 'RUNNING',
-                          'state_history':
-                              {'$elemMatch':
-                                   {'state': 'RUNNING',
-                                    'updated_on': {'$lte': cutoff_timestr}
-                                    }
-                               }
-                          }
+        lostruns_query = launch_query or {}
+        lostruns_query["state"] = "RUNNING"
+        lostruns_query["state_history"] = {'$elemMatch': {'state': 'RUNNING',
+                                                          'updated_on': {
+                                                              '$lte': cutoff_timestr}
+                                                          }
+                                           }
 
         if query:
             fw_ids = [x["fw_id"] for x in self.fireworks.find(query,
@@ -1685,44 +1686,44 @@ class LaunchPad(FWSerializable):
             # look for action in FW_offline.json
             offline_loc = zpath(os.path.join(m_launch.launch_dir,
                                              "FW_offline.json"))
-            with zopen(offline_loc) as f:
-                offline_data = loadfn(offline_loc)
-                if 'started_on' in offline_data:
-                    m_launch.state = 'RUNNING'
-                    for s in m_launch.state_history:
-                        if s['state'] == 'RUNNING':
-                            s['created_on'] = reconstitute_dates(offline_data['started_on'])
-                    l = self.launches.find_one_and_replace({'launch_id': m_launch.launch_id},
-                                                           m_launch.to_db_dict(), upsert=True)
-                    fw_id = l['fw_id']
-                    f = self.fireworks.find_one_and_update({'fw_id': fw_id},
-                                                           {'$set':
-                                                                {'state': 'RUNNING',
-                                                                 'updated_on': datetime.datetime.utcnow()
-                                                                 }
-                                                            })
-                    if f:
-                        self._refresh_wf(fw_id)
 
-                if 'checkpoint' in offline_data:
-                    m_launch.touch_history(checkpoint=offline_data['checkpoint'])
-                    self.launches.find_one_and_replace({'launch_id': m_launch.launch_id},
+            offline_data = loadfn(offline_loc)
+            if 'started_on' in offline_data:
+                m_launch.state = 'RUNNING'
+                for s in m_launch.state_history:
+                    if s['state'] == 'RUNNING':
+                        s['created_on'] = reconstitute_dates(offline_data['started_on'])
+                l = self.launches.find_one_and_replace({'launch_id': m_launch.launch_id},
                                                        m_launch.to_db_dict(), upsert=True)
+                fw_id = l['fw_id']
+                f = self.fireworks.find_one_and_update({'fw_id': fw_id},
+                                                       {'$set':
+                                                            {'state': 'RUNNING',
+                                                             'updated_on': datetime.datetime.utcnow()
+                                                             }
+                                                        })
+                if f:
+                    self._refresh_wf(fw_id)
 
-                if 'fwaction' in offline_data:
-                    fwaction = FWAction.from_dict(offline_data['fwaction'])
-                    state = offline_data['state']
-                    m_launch = Launch.from_dict(
-                        self.complete_launch(launch_id, fwaction, state))
-                    for s in m_launch.state_history:
-                        if s['state'] == offline_data['state']:
-                            s['created_on'] = reconstitute_dates(offline_data['completed_on'])
-                    self.launches.find_one_and_update({'launch_id': m_launch.launch_id},
-                                                      {'$set':
-                                                           {'state_history': m_launch.state_history}
-                                                      })
-                    self.offline_runs.update_one({"launch_id": launch_id},
-                                                 {"$set": {"completed": True}})
+            if 'checkpoint' in offline_data:
+                m_launch.touch_history(checkpoint=offline_data['checkpoint'])
+                self.launches.find_one_and_replace({'launch_id': m_launch.launch_id},
+                                                   m_launch.to_db_dict(), upsert=True)
+
+            if 'fwaction' in offline_data:
+                fwaction = FWAction.from_dict(offline_data['fwaction'])
+                state = offline_data['state']
+                m_launch = Launch.from_dict(
+                    self.complete_launch(launch_id, fwaction, state))
+                for s in m_launch.state_history:
+                    if s['state'] == offline_data['state']:
+                        s['created_on'] = reconstitute_dates(offline_data['completed_on'])
+                self.launches.find_one_and_update({'launch_id': m_launch.launch_id},
+                                                  {'$set':
+                                                       {'state_history': m_launch.state_history}
+                                                  })
+                self.offline_runs.update_one({"launch_id": launch_id},
+                                             {"$set": {"completed": True}})
 
             # update the updated_on
             self.offline_runs.update_one({"launch_id": launch_id},
