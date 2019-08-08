@@ -44,7 +44,7 @@ def arrow_to_dot(input_dict):
 
     Returns:
       dict
-    """"
+    """
     if not isinstance(input_dict,dict):
       return input_dict
     else:
