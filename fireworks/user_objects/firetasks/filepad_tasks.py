@@ -89,7 +89,9 @@ class GetFilesByQueryTask(FiretaskBase):
     directory if not specified)
 
     Required params:
-        - query (dict): mongo db query identifying files to fetch
+        - query (dict): mongo db query identifying files to fetch.
+          Same as within fireworks.utilities.dict_mods, use '->' in dict keys
+          for querying nested documents, instead of MongoDB '.' (dot) seperator.
 
     Optional params:
         - sort_key (str): sort key, don't sort per default
@@ -107,6 +109,8 @@ class GetFilesByQueryTask(FiretaskBase):
         "filepad_file", "dest_dir", "new_file_names"]
 
     def run_task(self, fw_spec):
+        from fireworks.utilities.dict_mods import arrow_to_dot
+
         import pymongo
         fpad = get_fpad(self.get("filepad_file", None))
         dest_dir = self.get("dest_dir", os.path.abspath("."))
@@ -115,6 +119,9 @@ class GetFilesByQueryTask(FiretaskBase):
         sort_key = self.get("sort_key", None)
         sort_direction = self.get("sort_direction", pymongo.DESCENDING)
         limit = self.get("limit",None)
+
+        assert isinstance(query,dict)
+        query = arrow_to_dot(query)
 
         l = fpad.get_file_by_query(query,sort_key,sort_direction)
         for i, (file_contents, doc) in enumerate(l[:limit]):
