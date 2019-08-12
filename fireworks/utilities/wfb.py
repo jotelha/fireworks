@@ -117,7 +117,8 @@ class WorkflowBuilder:
     def initialize_template_engine(self):
         self.env = Environment(
           loader=FileSystemLoader(self.template_dir),
-          autoescape = False)
+          autoescape = False,
+          extensions=['jinja2_time.TimeExtension'])
         #  autoescape=select_autoescape(['yaml']))
         # register filters:
         self.env.filters['datetime'] = datetime
@@ -245,14 +246,14 @@ class WorkflowBuilder:
 
         #self.g.vs["instance"] = [[]]*len(self.g.vs)   # list of instances
         self.g.vs["persistent"] = [[{}]]*len(self.g.vs) # list of persistent contexts
-        self.g.vs["transient"] = [[{}]]*len(self.g.vs)  # list of transient contextes 
+        self.g.vs["transient"] = [[{}]]*len(self.g.vs)  # list of transient contextes
         for v in self.g.vs:
             if v["name"] in self.persistent_contexts:
                 v["persistent"] = self.persistent_contexts[ v["name"] ]
             if v["name"] in self.transient_contexts:
                 v["transient"] = self.transient_contexts[ v["name"] ]
-                
-        self.g.vs["template"] = self.g.vs["name"]  # this must not be touched later 
+
+        self.g.vs["template"] = self.g.vs["name"]  # this must not be touched later
 
         self.update()
 
@@ -260,7 +261,7 @@ class WorkflowBuilder:
         if not self.g.is_dag():
             self.logger.exception("Graph is not DAG!")
             raise ValueError
-            
+
         root = np.where(np.equal(self.g.degree(mode=igraph.IN),0))[0]
         if len(root) == 0:
             self.logger.exception("Graph has no root!")
@@ -276,7 +277,7 @@ class WorkflowBuilder:
         self.g.vs["dist"] = self.maximum_distance
 
         # for plotting purposes:
-        # self.plt_layout = self.g.layout_auto() 
+        # self.plt_layout = self.g.layout_auto()
         try:
             #self.plt_layout = self.g.layout_reingold_tilford(mode="out", root=[self.root]) # tree-like
             self.g.layout_fruchterman_reingold() # better than Kamanda-Kawai
@@ -292,7 +293,7 @@ class WorkflowBuilder:
         """Returns indices of all vertices in the subgraph beginning at node v, not following any edges leading to vertices in x"""
         if not isinstance(x, Iterable):
             x = set([x])
-            
+
         visited = set()
         def dfs(v):
             visited.add(v)
@@ -301,7 +302,7 @@ class WorkflowBuilder:
                     dfs(child)
         dfs(v)
         return visited
-    
+
     def subgraphs_below(self, v):
         """Returns list of list of indices of all vertices in the subgraphs beginning below node v"""
         forks = {}
@@ -312,9 +313,9 @@ class WorkflowBuilder:
                 forks[ e["type"] ].update(s)
             else:
                 forks[ e["type"] ] = set(s)
-            
+
         return list(forks.values())
-    
+
     def subgraph_except(self, x):
         """Returns indices of all vertices in the subgraph not following any path to any vertex in x"""
         visited = set()
@@ -325,17 +326,17 @@ class WorkflowBuilder:
                     dfs(child)
         dfs(self.root)
         return visited
-        
+
         # visited has now all vertices of subgraph
         self.logger.info("Selected subgraph with nodes: {}.".format( internal ) )
-        
+
     def duplicate_subset(self,sub,env,suffix='*'):
         """Duplicates subset within environment and returns old vid -> new vid dict mapping"""
         adjacent = set()
-        
+
         def new_name(v):
             return (self.g.vs[v]["name"]+str(suffix))
-        
+
         def duplicate_vertex(v):
             nam = new_name(v)
             self.h.add_vertex( nam )
@@ -346,7 +347,7 @@ class WorkflowBuilder:
                     self.h.vs[w][attribute] = self.g.vs[v][attribute]
             self.h.vs[w]["label"] = self.h.vs[w]["name"]
             return w
-        
+
         def duplicate_edge(e,s,t):
             self.h.add_edge(s,t)
             f = self.h.get_eid(s,t)
@@ -354,37 +355,37 @@ class WorkflowBuilder:
             for attribute in self.g.es.attribute_names():
                 self.h.es[f][attribute] = self.g.es[e][attribute]
             return f
-        
+
         def edges_adjecent_to_subset(s):
             edges = set()
             for v in s:
                 edges.update( self.g.incident(v,mode=igraph.ALL) )
             return edges
-        
+
         dup = [ duplicate_vertex(v) for v in sub ]
         sub_to_dup = { s: d for s,d in zip(sub,dup) }
-        
+
         edges = edges_adjecent_to_subset(sub)
-        
+
         for e in edges:
             (source,target) = self.g.es[e].tuple
-            
+
             if (source in sub) and (target in sub):
                 duplicate_edge(e,sub_to_dup[source],sub_to_dup[target])
             elif (source in sub) and (target in env):
                 duplicate_edge(e,sub_to_dup[source],target)
-            elif (source in env) and (target in sub):        
+            elif (source in env) and (target in sub):
                 duplicate_edge(e,source,sub_to_dup[target])
-                    
+
         return sub_to_dup
-    
+
     def descend(self):
         """Descends the graph in topological order and creates forks where demanded
-        
+
         Currently only supports bifurcations"""
-        
+
         self.g.vs["visited"] = False
-        
+
         # the topological order might change as new vertices are added during descend
         # introduced marker "visited" for this purpose
         suffix=''
@@ -402,7 +403,7 @@ class WorkflowBuilder:
 
                 self.g.vs[v]["visited"] = True
                 #get all forks if vertex marked accordingly
-                forks = self.subgraphs_below(v)  
+                forks = self.subgraphs_below(v)
 
                 # so far only supports bifurcation
                 if len(forks) > 1:
@@ -424,7 +425,7 @@ class WorkflowBuilder:
                     #env = set(self.topological_order) # a set of all nodes
                     env = set(self.subgraph_at(self.root)) # a set of all nodes
                     self.logger.info("Current set of vertices: {}.".format( env ) )
-                    
+
                     suffix = suffix + '*'
 
                     lenv = (env - fr ) | fl
@@ -442,7 +443,7 @@ class WorkflowBuilder:
                     self.h.delete_vertices(overlap)
                     self.g = self.h
                     self.update() # root index might change
-                    
+
                     # go up one level to while loop and rebuild topological order
                     # after modification of graph
                     self.logger.info("Forked and modified graph at node {}, rebuilding topological order.".format( v ) )
@@ -451,17 +452,17 @@ class WorkflowBuilder:
                 self.logger.info("All processed at node {}, finished.".format( v ) )
                 break # all vertices v have been visited, also in extended graph
             self.logger.info("Completed processing node {}, descending.".format( v ) )
-        return    
-            
+        return
+
     def maximum_spanning_tree(self):
         """Constructs maximum spanning tree by negation of weights"""
         #minimum_spanning_tree = self.g.spanning_tree()
         negated_weights = -np.ones(len(self.g.es))
         return self.g.spanning_tree(weights=negated_weights)
-    
+
     def bfs(self):
         return self.g.bfs(self.root, mode = igraph.OUT)
-        
+
     def bfs_advanced(self):
         bfs = self.g.bfsiter(self.root, mode = igraph.OUT, advanced = True)
         for (v, depth, p) in bfs:
@@ -469,7 +470,7 @@ class WorkflowBuilder:
                 self.logger.info("{:03d}: {:s} - depth {:0d},  {:03d}: {:s}".format(v.index, v["name"], depth, p.index, p["name"] ))
             else:
                 self.logger.info("{:03d}: {:s} - depth {:0d}, no ".format(v.index, v["name"], depth))
-                
+
     def tree(self):
         """Yields tree with possibly degenerate vertices"""
         t, m = self.g.unfold_tree(self.root, mode=igraph.OUT)
@@ -479,7 +480,7 @@ class WorkflowBuilder:
         t.vs["label_size"] = self.plt_label_font_size
         self.t = t
         return t
-    
+
     def postorder(self):
         """Visit all vertices in post-order beginning at root"""
         visited = set()
@@ -492,7 +493,7 @@ class WorkflowBuilder:
             order.append(v)
         dfs(self.root)
         return order
-    
+
     def select_closest_parent(self, v):
         """Returns parent closest above v, i.e. farthest from root"""
         parents = self.g.neighbors(v,mode=igraph.IN)
