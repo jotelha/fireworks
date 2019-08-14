@@ -194,7 +194,7 @@ class CommandLineTask(FireTaskBase):
                                         prefix, i ) )
                             elif isinstance(prefix,basestring):
                                 # prefix is string, not much to do, split & prepend
-                                processed_prefix = processed_prefix.split()
+                                processed_prefix = prefix.split()
                             else:
                                 raise ValueError(
                                     "type({}) = {} of prefix #{} not accepted!".format(
