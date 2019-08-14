@@ -509,6 +509,7 @@ class RecoverLammpsTask(FiretaskBase):
             print('The name of the previous job was: {}'.format(prev_job_info['name']))
             print('The id of the previous job was: {}'.format(prev_job_info['fw_id']))
             print('The location of the previous job was: {}'.format(path_prefix))
+        # TODO: fails for several parents if the "wrong" parent fizzles
         elif recover and ('_fizzled_parents' in fw_spec): # pull from fizzled previous FW
             fizzled_parents_array = fw_spec['_fizzled_parents']
             prev_job_info = fizzled_parents_array[-1] # pull latest (or last) fizzled parent
@@ -672,14 +673,14 @@ class RecoverLammpsTask(FiretaskBase):
                     and type(restart_fw.spec["_files_in"]) is dict:
                     print("Current recovery '_files_out': {}".format(fw_spec["_files_out"]))
                     print("Subsequent restart 'files_in': {}".format(restart_fw.spec["_files_in"]))
-    
+
                     # find overlap between current fw's outfiles and restart fw's
                     # infiles:
                     files_io_overlap = fw_spec["_files_out"].keys() \
                         & restart_fw.spec["_files_in"].keys()
                     print("Current recovery '_files_out' and subsequent restart "
                         "'files_in' overlap: {}".format(files_io_overlap))
-    
+
                     for k in files_io_overlap:
                         files = glob.glob(os.path.join(curdir,
                             fw_spec["_files_out"][k]))
@@ -688,7 +689,7 @@ class RecoverLammpsTask(FiretaskBase):
                             print("This Firework provides {}: {}".format(
                                 k, fw_spec["_files_out"][k] ), " for subsequent "
                                 "restart Firework." )
-    
+
                 # manually set _files_prev:
                 restart_fw.spec["_files_prev"] = files_prev
 
