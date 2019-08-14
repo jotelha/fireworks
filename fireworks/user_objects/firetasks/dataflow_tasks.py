@@ -146,7 +146,7 @@ class CommandLineTask(FireTaskBase):
                     if isinstance(init, basestring): init = [init]
                     assert isinstance(init,list)
                     for cmd in init:
-                        eval(cmd)
+                        exec(cmd)
                 else:
                     pass # no particular initialization for this environment
 
@@ -160,7 +160,7 @@ class CommandLineTask(FireTaskBase):
                         if isinstance(init, basestring): init = [init]
                         assert isinstance(init,list)
                         for cmd in init:
-                            eval(cmd)
+                            exec(cmd)
                     else:
                         pass # no specific initialization for this command
 
