@@ -170,24 +170,43 @@ class CommandLineTask(FireTaskBase):
                         if not isinstance(prefix_list, list):
                             prefix_list = [prefix_list]
 
+                        processed_prefix_list = []
                         for i, prefix in enumerate(prefix_list):
+                            processed_prefix = []
                             if isinstance(prefix, dict):
                                 # special treatment desired for this prefix
                                 if "eval" in prefix:
                                     # evaluate prefix in current context
-                                    prefix_list[i] = eval(prefix["eval"])
+                                    processed_prefix = eval(prefix["eval"])
+                                    try:
+                                        processed_prefix = processed_prefix.decode("utf-8")
+                                    except AttributeError:
+                                        pass
+                                    if isinstance(processed_prefix, basestring):
+                                        processed_prefix = processed_prefix.split()
+                                    else:
+                                        raise ValueError(
+                                            "Output {} of prefix #{} evaluation not accepted!".format(
+                                            processed_prefix, i ) )
                                 else:
                                     raise ValueError(
                                         "Formatting {} of prefix #{} not accepted!".format(
                                         prefix, i ) )
-                            elif not isinstance(prefix,basestring):
-                                raise ValueError(
-                                    "type({}) = {} of prexix #{} not accepted!".format(
-                                        prefix, type(prefix), i ) )
+                            elif isinstance(prefix,basestring):
+                                # prefix is string, not much to do, split & prepend
+                                processed_prefix = processed_prefix.split()
                             else:
-                                pass # prefix is string, nothing to do, just prepend
+                                raise ValueError(
+                                    "type({}) = {} of prefix #{} not accepted!".format(
+                                        prefix, type(prefix), i ) )
 
-                        command = prefix_list + command # concatenate two lists
+                            if not isinstance( processed_prefix, list):
+                                processed_prefix = [ processed_prefix ]
+
+                            processed_prefix_list.extend(processed_prefix)
+
+
+                        command = processed_prefix_list + command # concatenate two lists
                     else:
                         pass # no prefix list to prepend for this command
                 else:
