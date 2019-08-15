@@ -414,10 +414,10 @@ class ForeachTask(FireTaskBase):
         reflen = 0
         for split in split_list:
             assert isinstance(fw_spec[split], list)
-            if isinstance(self['task']['inputs'], list):
-                assert split in self['task']['inputs']
-            else: # only one inputs entry , str
-                assert split == self['task']['inputs']
+            #if isinstance(self['task']['inputs'], list):
+            #    assert split in self['task']['inputs']
+            #else: # only one inputs entry , str
+            #    assert split == self['task']['inputs']
 
             split_field = fw_spec[split]
             lensplit = len(split_field)
