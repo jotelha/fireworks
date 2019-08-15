@@ -409,7 +409,7 @@ class ForeachTask(FireTaskBase):
     def run_task(self, fw_spec):
         assert isinstance(self['split'], (basestring,list)), self['split']
         split_list = self['split']
-        if isinstance( split_list, basestring): split_list = [split_list] 
+        if isinstance( split_list, basestring): split_list = [split_list]
 
         reflen = 0
         for split in split_list:
@@ -444,7 +444,7 @@ class ForeachTask(FireTaskBase):
 
         for index, chunk in enumerate(chunks):
             spec = fw_spec.copy()
-            for split in split_list
+            for split in split_list:
                 spec[split] = chunk[split]
             task = load_object(self['task'])
             task['chunk_number'] = index
