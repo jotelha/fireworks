@@ -409,7 +409,7 @@ class ForeachTask(FireTaskBase):
     def run_task(self, fw_spec):
         assert isinstance(self['split'], (basestring,list)), self['split']
         split_list = self['split']
-        split_list = [split_list] if isinstance( split_list, basestring)
+        if isinstance( split_list, basestring): split_list = [split_list] 
 
         reflen = 0
         for split in split_list:
