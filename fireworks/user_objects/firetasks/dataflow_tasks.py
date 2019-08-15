@@ -108,7 +108,16 @@ class CommandLineTask(FireTaskBase):
                         if key in cmd_spec[label]:
                             item = cmd_spec[label][key]
                             if isinstance(item, basestring):
-                                inp[key] = fw_spec[item]
+                                # using ForEachTask, the 'split' list is still
+                                # a list. That breaks the functionality here
+                                # if used as
+                                # { 'split_list': {'source': 'split_list'}
+                                # thus try to "remove" encapsulating list
+                                if isinstance(fw_spec[item], list):
+                                  inp[key] = fw_spec[item][0]
+                                else:
+                                  inp[key] = fw_spec[item]
+
                             elif isinstance(item, dict):
                                 inp[key] = item
                             else:
@@ -358,6 +367,7 @@ class CommandLineTask(FireTaskBase):
         if outputs is not None:
             for output in outputs:
                 if ('source' in output
+                        # fails if source is "list":
                         and output['source']['type'] == 'path'):
                     copyfile(
                         output['source']['value'],
