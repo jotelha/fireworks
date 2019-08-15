@@ -452,7 +452,7 @@ class ForeachTask(FireTaskBase):
                 spec[split] = chunk[split]
 
             tasks = []
-            for task_entry in taks_list:
+            for task_entry in task_list:
                 task = load_object(task_entry)
                 task['chunk_number'] = index
                 tasks.append(task)
