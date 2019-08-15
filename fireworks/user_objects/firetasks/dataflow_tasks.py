@@ -361,7 +361,7 @@ class CommandLineTask(FireTaskBase):
         res = proc.communicate(input=stdininp)
         if proc.returncode != 0:
             err = res[1] if len(res) > 1 else ''
-            raise RuntimeError(err)
+            raise RuntimeError(err) # TODO: option to not fizzle
 
         retlist = []
         if outputs is not None:
@@ -391,44 +391,65 @@ class ForeachTask(FireTaskBase):
 
     Required params:
         - task (dict): a dictionary version of the firetask
-        - split (str): a label of an input list; it must be available both in
+        - split (str or [str]): label  an input list or a list of such;
+          they must be available both in
           the *inputs* list of the specified task and in the spec.
 
     Optional params:
         - number of chunks (int): if provided the *split* input list will be
           divided into this number of sublists and each will be processed by
           a separate child firework
+        - chunk index spec (str): if provided, chunk index is
+          stored in this _fw_spec field
     """
     _fw_name = 'ForeachTask'
     required_params = ['task', 'split']
     optional_params = ['number of chunks']
 
     def run_task(self, fw_spec):
-        assert isinstance(self['split'], basestring), self['split']
-        assert isinstance(fw_spec[self['split']], list)
-        if isinstance(self['task']['inputs'], list):
-            assert self['split'] in self['task']['inputs']
-        else:
-            assert self['split'] == self['task']['inputs']
+        assert isinstance(self['split'], (basestring,list)), self['split']
+        split_list = self['split']
+        split_list = [split_list] if isinstance( split_list, basestring)
 
-        split_field = fw_spec[self['split']]
-        lensplit = len(split_field)
-        assert lensplit != 0, ('input to split is empty:', self['split'])
+        reflen = 0
+        for split in split_list:
+            assert isinstance(fw_spec[split], list)
+            if isinstance(self['task']['inputs'], list):
+                assert split in self['task']['inputs']
+            else: # only one inputs entry , str
+                assert split == self['task']['inputs']
 
-        nchunks = self.get('number of chunks')
-        if not nchunks:
-            nchunks = lensplit
-        chunklen = lensplit // nchunks
-        if lensplit % nchunks > 0:
-            chunklen = chunklen + 1
-        chunks = [split_field[i:i+chunklen] for i in range(0, lensplit, chunklen)]
+            split_field = fw_spec[split]
+            lensplit = len(split_field)
+
+            # update reflen on first iteration
+            if reflen == 0:
+                assert lensplit != 0, ('input to split is empty:', split)
+                reflen = lensplit
+                nchunks = self.get('number of chunks')
+                if not nchunks:
+                    nchunks = lensplit
+                chunklen = lensplit // nchunks
+                if lensplit % nchunks > 0:
+                    chunklen = chunklen + 1
+
+                chunks = [ { split: split_field[i:i+chunklen] } for i in range(0, lensplit, chunklen)]
+            else:
+                assert lensplit == reflen, ('input lists not of equal length:', split)
+                for i in range(0, lensplit, chunklen):
+                    chunks[i//chunklen].update( { split: split_field[i:i+chunklen] } )
 
         fireworks = []
+        chunk_index_spec = self.get('chunk index spec')
+
         for index, chunk in enumerate(chunks):
             spec = fw_spec.copy()
-            spec[self['split']] = chunk
+            for split in split_list
+                spec[split] = chunk[split]
             task = load_object(self['task'])
             task['chunk_number'] = index
+            if chunk_index_spec and isinstance(chunk_index_spec, basestring):
+                spec[chunk_index_spec] = index
             name = self._fw_name + ' ' + str(index)
             fireworks.append(Firework(task, spec=spec, name=name))
         return FWAction(detours=fireworks)
