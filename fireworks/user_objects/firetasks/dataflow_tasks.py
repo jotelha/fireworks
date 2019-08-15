@@ -119,6 +119,9 @@ class CommandLineTask(FireTaskBase):
         command = [ command ] if isinstance(command,basestring) else command
         assert isinstance(command, list)
 
+        # execute environment setup code embedded in worker file
+        # TODO: outsource into separate function and provide to other tasks
+        
         # sample settings in worker file:
         # {
         # python: {
@@ -318,7 +321,7 @@ class CommandLineTask(FireTaskBase):
                 if arg['target']['type'] == 'path':
                     assert 'value' in arg['target']
                     assert len(arg['target']['value']) > 0
-                    path = arg['target']['value']
+                    path = os.path.abspath( arg['target']['value'] )
                     if os.path.isdir(path):
                         path = os.path.join(path, str(uuid.uuid4()))
                         arg['target']['value'] = path
