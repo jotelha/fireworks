@@ -442,16 +442,25 @@ class ForeachTask(FireTaskBase):
         fireworks = []
         chunk_index_spec = self.get('chunk index spec')
 
+        # allow for multiple tasks
+        task_list = self['task']
+        if not isinstance( task_list, list ):
+            task_list = [ task_list ]
         for index, chunk in enumerate(chunks):
             spec = fw_spec.copy()
             for split in split_list:
                 spec[split] = chunk[split]
-            task = load_object(self['task'])
-            task['chunk_number'] = index
+
+            tasks = []
+            for task_entry in taks_list:
+                task = load_object(task_entry)
+                task['chunk_number'] = index
+                tasks.append(task)
+
             if chunk_index_spec and isinstance(chunk_index_spec, basestring):
                 spec[chunk_index_spec] = index
             name = self._fw_name + ' ' + str(index)
-            fireworks.append(Firework(task, spec=spec, name=name))
+            fireworks.append(Firework(tasks, spec=spec, name=name))
         return FWAction(detours=fireworks)
 
 
