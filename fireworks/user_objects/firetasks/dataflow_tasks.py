@@ -367,8 +367,8 @@ class CommandLineTask(FireTaskBase):
         if outputs is not None:
             for output in outputs:
                 if ('source' in output
-                        # fails if source is "list":
                         and output['source']['type'] == 'path'):
+                    # above fails if source is "list"
                     copyfile(
                         output['source']['value'],
                         output['target']['value']
