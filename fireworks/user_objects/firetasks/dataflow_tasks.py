@@ -233,15 +233,20 @@ class CommandLineTask(FireTaskBase):
                 mod_spec = []
                 if len(olabels) > 1:
                     assert len(olabels) == len(outlist)
-                    for olab, out in zip(olabels, outlist):
-                        for item in out:
-                            mod_spec.append({'_push': {olab: item}})
+                    # for olab, out in zip(olabels, outlist):
+                    for i, olab in enumerate(olabels):
+                        out = outlist[i]
+                        # issue if out is dict: zip only uses key
+                        #for item in out:
+                        #    mod_spec.append({'_push': {olab: item}})
+                        mod_spec.append({'_push': {olab: out}})
                 else:
                     for out in outlist:
                         mod_spec.append({'_push': {olabels[0]: out}})
                 return FWAction(mod_spec=mod_spec)
             else:
                 output_dict = {}
+                # here ok, outlist must be list
                 for olab, out in zip(olabels, outlist):
                     output_dict[olab] = out
                 return FWAction(update_spec=output_dict)
@@ -351,6 +356,9 @@ class CommandLineTask(FireTaskBase):
                         argstr += path
                 elif arg['target']['type'] == 'data':
                     stdout = PIPE
+                    # TODO: specifying two outputs with source 'stdout',
+                    # one with target 'data', one with target 'path' does not
+                    # work, only one of them is taken into account!
                 else:
                     # filepad
                     raise NotImplementedError()
@@ -366,6 +374,8 @@ class CommandLineTask(FireTaskBase):
         retlist = []
         if outputs is not None:
             for output in outputs:
+                # what about the source type: path, target type: data case,
+                # i.e. putting output file content in the data base?
                 if ('source' in output
                         and output['source']['type'] == 'path'):
                     # above fails if source is "list"
