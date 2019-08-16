@@ -176,7 +176,11 @@ class PyTask(FiretaskBase):
         inputs = self.get('inputs', [])
         assert isinstance(inputs, list)
         for item in inputs:
-            args.append(fw_spec[item])
+            # if input is list with single element, remove encapsulating list:
+            if isinstance(fw_spec[item],list) and len(fw_spec[item]) == 1:
+                args.append(fw_spec[item][0])
+            else:
+                args.append(fw_spec[item])
 
         if self.get('auto_kwargs'):
             kwargs = {k: v for k, v in self.items()
