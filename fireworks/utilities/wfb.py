@@ -194,49 +194,6 @@ class WorkflowBuilder:
 
         return wf
 
-    def extract_partial_workflows(self, infile='wf.yaml', from_files=True):
-        wf = Workflow.from_file(os.path.join(self.build_dir, infile))
-
-        fws_dict = { fw.fw_id: fw for fw in wf.fws }
-        self.logger.debug(
-            "FWs in original WF: {}".format(fws_dict) )
-
-        def build_partial_workflow(fw_id, fws_set=set(), links={}):
-            if fw_id in fws_set:
-                # already visited
-                return fws_set, links
-
-            fws_set.add(fw_id)
-            links.update({fw_id: wf.links[fw_id]})
-            for child in links[fw_id]:
-                fws_set, links = build_partial_workflow(child, fws_set, links)
-
-            return fws_set, links
-
-        wfs_list = []
-        for fw_id, fw in sorted(fws_dict.items()):
-            fws_set, links = build_partial_workflow(fw_id)
-
-            self.logger.info(
-                "partial WF at Fireworks {}: {} has {} members.".format(
-                    fw_id, fw.name, len(fws_set) ) )
-            self.logger.debug(
-                "partial WF at Fireworks {}: fws_set - {}, links - {}.".format(
-                    fw_id, fws_set, links ) )
-
-            fws_list = [ fws_dict[fw_id] for fw_id in fws_set ]
-            wf_name = "Partial WF: " + fw.name
-            wf_metadata = wf.metadata
-
-            outfile_name = "wf_{}.yaml".format(fw_id)
-
-            partial_wf = Workflow( fws_list, links, name=wf_name, metadata=wf_metadata )
-            partial_wf.to_file(os.path.join(self.build_dir,outfile_name),f_format="yaml")
-
-            wfs_list.append(partial_wf)
-
-        return wfs_list
-
     def find_undefined_variables(self):
         template_variables = { 'all' : set() }
         for template_name in self.env.list_templates():
@@ -730,6 +687,67 @@ class WorkflowBuilder:
                         [ i for i in range(len(vs)) ],
                         vs["name"],
                         *[ vs[a] for a in vs.attribute_names() if a not in exclude ] ) ) ] )
+
+def extract_partial_workflow(wf, fw_id = None, wfs_dict = {},
+    fws_dict = None, fws_set=set(), links = {} ):
+    """Recursively extracts partial Workflow at certain Fireworks
+    (and all sub WF as well)
+
+    Args:
+      wf (Workflow):  the original workflow
+      fw_id (int):    the node of interest, root if default: None,
+                      more than one root not allowed then
+      wfs_dict ( {int: Workflow }): dict of (FW IDs, sub-workflows), hand empty
+                      reference to retrieve all sub-w'flows, default: None
+      fws_dict ( {int: Firework }): automatically built, leave at default: None
+      fws_set ( set( Firework ) ):  automatically built, hand empty reference to
+                      retrieve sub-set of FW IDs in partial w'flow
+      links:  ( {int: [int]} ): automatically built, hand empty reference to
+                      retrieve sub-dict of parent-child links in partial w'flow
+    Returns:
+      Workflow:       partial w'flow built at fw_id
+
+    """
+    global logger
+
+    if not fws_dict:
+        fws_dict = { fw.fw_id: fw for fw in wf.fws }
+        logger.debug(
+            "FWs in original WF: {}".format(fws_dict) )
+
+    if fw_id is None:
+        assert len(wf.root_fw_ids) == 1, "More than one root fws!"
+        fw_id = wf.root_fw_ids[0]
+
+    assert isinstance(fw_id, int), "Only integer FW IDs allowed!"
+
+    fws_set.add(fw_id)
+    links.update({fw_id: wf.links[fw_id]})
+
+    for child_fw_id in links[fw_id]:
+        child_fws_set = set()
+        child_links   = {}
+        # create a new workflow for every child
+        child_wf = extract_partial_workflow(
+            wf, fw_id=child_fw_id, wfs_dict=wfs_dict, fws_dict=fws_dict,
+            fws_set=child_fws_set, links=child_links)
+
+        # if child has not yet been visited before, update set of all sub-WFs
+        if child_fw_id not in wfs_dict:
+            logger.debug(
+                "First visit at FW {}: {}".format(
+                child_fw_id, fws_dict[child_fw_id].name ) )
+            wfs_dict.update( {child_fw_id: child_wf} )
+
+        fws_set.update( child_fws_set )
+        links.update( child_links )
+
+    # reconstruct all FW in partial w'flow from FW IDs in subset:
+    fws_list = [ fws_dict[fw_id] for fw_id in fws_set ]
+
+    # partial workflow is named after its root FW, metadata same as original WF
+    return Workflow( fws_list, links,
+        name=fws_dict[fw_id].name, metadata=wf.metadata )
 
 def build_wf(system_infile = 'system.yaml', build_dir = 'build', template_dir = 'templates'):
     """Build workflow from system .yaml description and set of templates.
