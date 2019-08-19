@@ -688,8 +688,9 @@ class WorkflowBuilder:
                         vs["name"],
                         *[ vs[a] for a in vs.attribute_names() if a not in exclude ] ) ) ] )
 
-def extract_partial_workflow(wf, fw_id = None, wfs_dict = {},
-    fws_dict = None, fws_set=set(), links = {} ):
+# modified default arguments will persist until the next call!!!
+def extract_partial_workflow(wf, fw_id = None, wfs_dict = None,
+    fws_dict = None, fws_set = None, links = None ):
     """Recursively extracts partial Workflow at certain Fireworks
     (and all sub WF as well)
 
@@ -710,7 +711,11 @@ def extract_partial_workflow(wf, fw_id = None, wfs_dict = {},
     """
     global logger
 
-    if not fws_dict:
+    if wfs_dict is None: wfs_dict = {}
+    if fws_set  is None: fws_set = set()
+    if links    is None: links = {}
+
+    if fws_dict is None:
         fws_dict = { fw.fw_id: fw for fw in wf.fws }
         logger.debug(
             "FWs in original WF: {}".format(fws_dict) )
