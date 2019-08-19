@@ -194,6 +194,48 @@ class WorkflowBuilder:
 
         return wf
 
+    def extract_partial_workflows(self, infile='wf.yaml', from_files=True):
+        wf = Workflow.from_file(os.path.join(self.build_dir, infile))
+
+        fws_dict = { fw.fw_id: fw for fw in wf.fws }
+        self.logger.debug(
+            "FWs in original WF: {}".format(fws_dict) )
+
+        def build_partial_workflow(fw_id, fws_set=set(), links={}):
+            if fw_id in fws_set:
+                # already visited
+                return fws_set, links
+
+            fws_set.add(fw_id)
+            links.update({fw_id: wf.links[fw_id]})
+            for child in links[fw_id]:
+                fws_set, links = build_partial_workflow(child, fws_set, links)
+
+            return fws_set, links
+
+        wfs_list = []
+        for fw_id, fw in sorted(fws_dict.items()):
+            fws_set, links = build_partial_workflow(fw_id)
+
+            self.logger.info(
+                "partial WF at Fireworks {}: {} has {} members.".format(
+                    fw_id, fw.name, len(fws_set) ) )
+            self.logger.debug(
+                "partial WF at Fireworks {}: fws_set - {}, links - {}.".format(
+                    fw_id, fws_set, links ) )
+
+            fws_list = [ fws_dict[fw_id] for fw_id in fws_set ]
+            wf_name = "Partial WF: " + fw.name
+            wf_metadata = wf.metadata
+
+            outfile_name = "wf_{}.yaml".format(fw_id)
+
+            partial_wf = Workflow( fws_list, links, name=wf_name, metadata=wf_metadata )
+            partial_wf.to_file(os.path.join(self.build_dir,outfile_name),f_format="yaml")
+
+            wfs_list.append(partial_wf)
+
+        return wfs_list
 
     def find_undefined_variables(self):
         template_variables = { 'all' : set() }
