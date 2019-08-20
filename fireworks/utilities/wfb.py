@@ -12,6 +12,7 @@ import yaml
 from jinja2 import Template, Environment, FileSystemLoader
 from jinja2 import select_autoescape, meta, contextfunction
 from fireworks import Firework, Workflow
+from ansible.plugins.filter.core import to_yaml, to_nice_yaml, to_json, to_nice_json
 
 # logging
 logger = logging.getLogger(__name__)
@@ -126,6 +127,10 @@ class WorkflowBuilder:
         #  autoescape=select_autoescape(['yaml']))
         # register filters and functions:
         self.env.filters['datetime'] = datetime
+        self.env.filters['to_yaml'] = to_yaml
+        self.env.filters['to_nice_yaml'] = to_nice_yaml
+        self.env.filters['to_json'] = to_json
+        self.env.filters['to_nice_json'] = to_nice_json
         self.env.globals['context']  = get_context
         self.env.globals['callable'] = callable
 
