@@ -10,7 +10,7 @@ from tabulate import tabulate
 from pprint import pprint
 import yaml
 from jinja2 import Template, Environment, FileSystemLoader
-from jinja2 import select_autoescape, meta
+from jinja2 import select_autoescape, meta, contextfunction
 from fireworks import Firework, Workflow
 
 # logging
@@ -29,6 +29,10 @@ def datetime(value,format='%Y-%m-%d-%H:%M'):
         return time.strftime(format)
     else:
         return value.strftime(format)
+
+@contextfunction
+def get_context(c):
+    return c
 
 class WorkflowBuilder:
     std_context         = {}
@@ -120,8 +124,10 @@ class WorkflowBuilder:
           autoescape = False,
           extensions=['jinja2_time.TimeExtension'])
         #  autoescape=select_autoescape(['yaml']))
-        # register filters:
+        # register filters and functions:
         self.env.filters['datetime'] = datetime
+        self.env.globals['context']  = get_context
+        self.env.globals['callable'] = callable
 
     def render_template(self,template_name,outfile_name,context):
         template = self.env.get_template(template_name)
