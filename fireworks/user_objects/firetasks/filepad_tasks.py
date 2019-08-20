@@ -107,14 +107,17 @@ class GetFilesByQueryTask(FiretaskBase):
           directory.
         - new_file_names ([str]): if provided, the retrieved files will be
           renamed. Not recommended as order and number of queried files not fixed.
+        - meta_file_suffix (str): if not None, metadata for each file is written
+          to a YAML file of the same name, suffixed by this string.
+          Default: ".meta.yaml"
     """
     _fw_name = 'GetFilesByQueryTask'
     required_params = ["query"]
     optional_params = ["sort_key","sort_direction", "limit",
-        "filepad_file", "dest_dir", "new_file_names"]
+        "filepad_file", "dest_dir", "new_file_names", "meta_file_suffix"]
 
     def run_task(self, fw_spec):
-        import pymongo, json
+        import pymongo, json, yaml
         from fireworks.utilities.dict_mods import arrow_to_dot
 
         fpad                        = get_fpad(self.get("filepad_file",
@@ -130,6 +133,7 @@ class GetFilesByQueryTask(FiretaskBase):
         fizzle_empty_result         = self.get("fizzle_empty_result", True)
         fizzle_degenerate_file_name = self.get("fizzle_degenerate_file_name",
                                                 True)
+        meta_file_suffix            = self.get("meta_file_suffix",".meta.yaml")
 
         assert isinstance(query,dict)
         query = arrow_to_dot(query)
@@ -153,6 +157,10 @@ class GetFilesByQueryTask(FiretaskBase):
             unique_file_names.add(file_name)
             with open(os.path.join(dest_dir, file_name), "wb") as f:
                 f.write(file_contents)
+
+            meta_file_name = file_name + meta_file_suffix
+            with open(os.path.join(dest_dir, meta_file_name), "w") as f:
+                yaml.dump(doc, f, default_flow_style=False)
 
 class DeleteFilesTask(FiretaskBase):
     """
