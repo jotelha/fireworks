@@ -159,8 +159,11 @@ class GetFilesByQueryTask(FiretaskBase):
                 f.write(file_contents)
 
             meta_file_name = file_name + meta_file_suffix
-            with open(os.path.join(dest_dir, meta_file_name), "w") as f:
-                yaml.dump(doc, f, default_flow_style=False)
+            try:
+              with open(os.path.join(dest_dir, meta_file_name), "w") as f:
+                  yaml.dump(doc["metadata"], f, default_flow_style=False)
+            except:
+              pass # ignore error writing metadata, TODO: warn
 
 class DeleteFilesTask(FiretaskBase):
     """
