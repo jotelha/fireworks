@@ -35,6 +35,22 @@ def get_nested_dict(input_dict, key):
         current = current[tok]
 
 
+def get_nested_dict_value(input_dict, key):
+    """Uses '.' or '->'-splittable string as key to access nested dict."""
+    try:
+        val = input_dict[key]
+    except KeyError:
+        key = key.replace("->", ".")  # make sure no -> left
+        try:
+            key_prefix, key_suffix = key.split('.', 1)
+        except ValueError:   # not enough values to unpack
+            raise KeyError
+
+        val = get_nested_dict_value(input_dict[key_prefix], key_suffix)
+
+    return val
+
+
 def arrow_to_dot(input_dict):
     """
     Converts arrows ('->') in dict keys to dots '.' recursively.
