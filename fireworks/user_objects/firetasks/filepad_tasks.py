@@ -6,6 +6,7 @@ import os
 
 from fireworks.core.firework import FiretaskBase
 from fireworks.utilities.filepad import FilePad
+from fireworks.utilities.dict_mods import get_nested_dict_value
 
 __author__ = 'Kiran Mathew, Johannes Hoermann'
 __email__ = 'kmathew@lbl.gov, johannes.hoermann@imtek.uni-freiburg.de'
@@ -25,10 +26,18 @@ class AddFilesTask(FiretaskBase):
         - filepad_file (str): path to the filepad db config file
         - compress (bool): whether or not to compress the file before inserting to gridfs
         - metadata (dict): metadata to store along with the file, stored in 'metadata' key
+        - metadata_key (str): if not None, then get additional
+            metadata from the specified key within 'specs' and merge with the
+            static 'metadata' dict. Specified key must point to a dict.
+            Static task metadata has precendence over fw_spec metadata in the
+            case of overlap. Specify nested fields with a '->' or '.' delimiter.
+            If specified key does not exist or is no dict, then silently ignore.
+            Default: 'metadata'
     """
     _fw_name = 'AddFilesTask'
     required_params = ["paths"]
-    optional_params = ["identifiers", "directory", "filepad_file", "compress", "metadata"]
+    optional_params = ["identifiers", "directory", "filepad_file", "compress",
+        "metadata", "metadata_key"]
 
     def run_task(self, fw_spec):
 
@@ -48,8 +57,27 @@ class AddFilesTask(FiretaskBase):
 
         fpad = get_fpad(self.get("filepad_file", None))
 
+        metadata_key = self.get("metadata_key", "metadata")
+        task_metadata = self.get("metadata", None)
+
+        metadata = {}
+        if metadata_key:
+            try:
+                metadata.update(get_nested_dict_value(fw_spec, metadata_key))
+            except Exception:
+                pass
+
+        if task_metadata:
+            try:
+                metadata.update(task_metadata)
+            except Exception:
+                pass
+
+        if len(metadata) == 0:
+            metadata = None
+
         for p, l in zip(paths, identifiers):
-            fpad.add_file(p, identifier=l, metadata=self.get("metadata", None),
+            fpad.add_file(p, identifier=l, metadata=metadata,
                           compress=self.get("compress", True))
 
 
