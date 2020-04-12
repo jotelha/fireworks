@@ -52,6 +52,26 @@ def get_nested_dict_value(input_dict, key):
     return val
 
 
+def set_nested_dict_value(input_dict, key, val):
+    """Uses '.' or '->'-splittable string as key and returns modified dict."""
+    if not isinstance(input_dict, dict):
+        # dangerous, just replace with dict
+        input_dict = {}
+
+    key = key.replace("->", ".")  # make sure no -> left
+    split_key = key.split('.', 1)
+    if len(split_key) == 2:
+        key_prefix, key_suffix = split_key[0], split_key[1]
+        if key_prefix not in input_dict:
+            input_dict[key_prefix] = {}
+        input_dict[key_prefix] = set_nested_dict_value(
+            input_dict[key_prefix], key_suffix, val)
+    else:  # not enough values to unpack
+        input_dict[key] = val
+
+    return input_dict
+
+
 def arrow_to_dot(input_dict):
     """
     Converts arrows ('->') in dict keys to dots '.' recursively.
