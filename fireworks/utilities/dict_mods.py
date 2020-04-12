@@ -37,14 +37,15 @@ def get_nested_dict(input_dict, key):
 
 def get_nested_dict_value(input_dict, key):
     """Uses '.' or '->'-splittable string as key to access nested dict."""
-    try:
+    if key in input_dict:
         val = input_dict[key]
-    except KeyError:
+    else:
         key = key.replace("->", ".")  # make sure no -> left
-        try:
-            key_prefix, key_suffix = key.split('.', 1)
-        except ValueError:   # not enough values to unpack
-            raise KeyError
+        split_key = key.split('.', 1)
+        if len(split_key) == 2:
+            key_prefix, key_suffix = split_key[0], split_key[1]
+        else:  # not enough values to unpack
+            raise KeyError("'{:s}' not in {}".format(key, input_dict))
 
         val = get_nested_dict_value(input_dict[key_prefix], key_suffix)
 
