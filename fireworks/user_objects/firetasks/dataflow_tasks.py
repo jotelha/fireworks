@@ -8,6 +8,7 @@ import sys
 from fireworks import Firework
 from fireworks.core.firework import FWAction, FireTaskBase
 from fireworks.utilities.fw_serializers import load_object
+from fireworks.utilities.dict_mods import get_nested_dict_value, set_nested_dict_value
 if sys.version_info[0] > 2:
     basestring = str
 
@@ -373,24 +374,37 @@ class JoinDictTask(FireTaskBase):
         assert isinstance(self['output'], basestring)
         assert isinstance(self['inputs'], list)
 
-        if self['output'] not in fw_spec:
+        try:  # replace if / esle with try / except to find possibly nested val
+            output = get_nested_dict_value(fw_spec, self['output'])
+        except KeyError:
             output = {}
-        else:
-            assert isinstance(fw_spec[self['output']], dict)
-            output = fw_spec[self['output']]
+
+        assert isinstance(output, dict), "output must be dict."
 
         if self.get('rename'):
             assert isinstance(self.get('rename'), dict)
             rename = self.get('rename')
         else:
             rename = {}
+
         for item in self['inputs']:
             if item in rename:
-                output[self['rename'][item]] = fw_spec[item]
+                output = set_nested_dict_value(
+                    output, self['rename'][item],
+                    get_nested_dict_value(fw_spec, item))
+                # replaces
+                # output[self['rename'][item]] = fw_spec[item]
             else:
-                output[item] = fw_spec[item]
+                output = set_nested_dict_value(
+                    output, item,
+                    get_nested_dict_value(fw_spec, item))
+                # replaces
+                # output[item] = fw_spec[item]
 
-        return FWAction(update_spec={self['output']: output})
+        return FWAction(mod_spec=[{'_set': {self['output']: output}}])
+        # replaces
+        # return FWAction(update_spec={self['output']: output})
+
 
 
 class JoinListTask(FireTaskBase):
@@ -401,16 +415,27 @@ class JoinListTask(FireTaskBase):
     def run_task(self, fw_spec):
         assert isinstance(self['output'], basestring)
         assert isinstance(self['inputs'], list)
-        if self['output'] not in fw_spec:
+
+        try:  # replace if / esle with try / except to find possibly nested val
+            output = get_nested_dict_value(fw_spec, self['output'])
+        except KeyError:
             output = []
-        else:
-            assert isinstance(fw_spec[self['output']], list)
-            output = fw_spec[self['output']]
+        assert isinstance(output, list), "output must be list."
+        # replaces
+        # if self['output'] not in fw_spec:
+        #    output = []
+        # else:
+        #    assert isinstance(fw_spec[self['output']], list)
+        #    output = fw_spec[self['output']]
 
         for item in self['inputs']:
-            output.append(fw_spec[item])
+            output.append(get_nested_dict_value(fw_spec, item))
+            # replaces
+            # output.append(fw_spec[item])
 
-        return FWAction(update_spec={self['output']: output})
+        return FWAction(mod_spec=[{'_set': {self['output']: output}}])
+        # replaces
+        # return FWAction(update_spec={self['output']: output})
 
 
 class ImportDataTask(FireTaskBase):
