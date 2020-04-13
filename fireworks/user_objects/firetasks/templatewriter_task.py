@@ -12,6 +12,7 @@ import os
 from jinja2 import Environment, FileSystemLoader
 
 from fireworks.core.firework import FiretaskBase
+from fireworks.utilities.dict_mods import get_nested_dict_value
 from fireworks.fw_config import TEMPLATE_DIR
 
 __author__ = 'Anubhav Jain'
@@ -28,6 +29,9 @@ class TemplateWriterTask(FiretaskBase):
     Required parameters:
         - template_file: (str) - path to template file
         - context: (dict) - variable replacements for the template file
+        - context_inputs: (dict) - variable replacements for the template file
+            to look up in fw_spec. Overrides static key-value pairs in
+            'context' in the case of conflict.
         - output_file: (str) - output file
     Optional parameters:
         - append: (bool) - append to output file (instead of overwrite)
@@ -41,6 +45,11 @@ class TemplateWriterTask(FiretaskBase):
         else:
             self._load_params(self)
 
+        # modify context dynamically with values from fw_spec
+        for context_key, fw_spec_key in self.context_inputs.items():
+            self.context[context_key] = get_nested_dict_value(
+                fw_spec, fw_spec_key)
+
         with open(self.template_file) as f:
             t = Environment(loader=FileSystemLoader(self.template_dir),
                             autoescape=True).from_string(f.read())
@@ -52,7 +61,9 @@ class TemplateWriterTask(FiretaskBase):
 
     def _load_params(self, d):
 
-        self.context = d['context']
+        self.context = d.get('context', {})
+        self.context_inputs = d.get('context_inputs', {})
+
         self.output_file = d['output_file']
         self.append_file = d.get('append')  # append to output file?
 
