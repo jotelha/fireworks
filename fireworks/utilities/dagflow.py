@@ -259,13 +259,12 @@ class DAGFlow(Graph):
         try:
             assert self.is_dag(), 'The workflow graph must be a DAG.'
         except AssertionError as err:
-            err.args = (err.args[0]
+            warnings.warn(err.args[0]
                         + ': found cycles: '
-                        + repr(self._get_cycles()),)
-            raise err
-        assert self.is_connected(mode='weak'), (
-            'The workflow graph must be connected.'
-        )
+                        + repr(self._get_cycles()))
+        if not self.is_connected(mode='weak'):
+            warnings.warn('The workflow graph must be connected.')
+
         assert len(self.vs['id']) == len(set(self.vs['id'])), (
             'Workflow steps must have unique IDs.'
         )
