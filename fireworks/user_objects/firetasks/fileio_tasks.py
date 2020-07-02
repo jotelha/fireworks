@@ -86,7 +86,7 @@ class FileTransferTask(FiretaskBase):
         - retry_delay: (int) number of seconds to wait between retries; defaults to `10`
     """
     _fw_name = 'FileTransferTask'
-    required_params = ["mode", "files", "dest"]
+    required_params = ["mode", "files"]
     optional_params = ["server", "user", "key_filename", "max_retry", "retry_delay"]
 
     fn_list = {
