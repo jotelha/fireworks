@@ -9,6 +9,7 @@ A runnable script for managing a FireWorks database (a command-line interface to
 """
 
 from argparse import ArgumentParser, ArgumentTypeError
+import copy
 import os
 import re
 import shutil
@@ -223,6 +224,31 @@ def add_wf_dir(args):
         lp.add_wf(fwf)
 
 
+def print_fws(ids, lp, args):
+    """Prints results of some FireWorks query to stdout."""
+    fws = []
+    if args.display_format == 'ids':
+        fws = ids
+    elif args.display_format == 'count':
+        fws = [ids]
+    else:
+        for id in ids:
+            fw = lp.get_fw_by_id(id)
+            d = fw.to_dict()
+            d['state'] = d.get('state', 'WAITING')
+            if args.display_format == 'more' or args.display_format == 'less':
+                if 'archived_launches' in d:
+                    del d['archived_launches']
+                del d['spec']
+            if args.display_format == 'less':
+                if 'launches' in d:
+                    del d['launches']
+            fws.append(d)
+    if len(fws) == 1:
+        fws = fws[0]
+
+    print(args.output(fws))
+
 def get_fws(args):
     lp = get_lp(args)
     if sum([bool(x) for x in [args.fw_id, args.name, args.state, args.query]]) > 1:
@@ -262,28 +288,7 @@ def get_fws(args):
     else:
         ids = lp.get_fw_ids(query, sort, args.max, count_only=args.display_format == 'count',
                             launches_mode=args.launches_mode)
-    fws = []
-    if args.display_format == 'ids':
-        fws = ids
-    elif args.display_format == 'count':
-        fws = [ids]
-    else:
-        for id in ids:
-            fw = lp.get_fw_by_id(id)
-            d = fw.to_dict()
-            d['state'] = d.get('state', 'WAITING')
-            if args.display_format == 'more' or args.display_format == 'less':
-                if 'archived_launches' in d:
-                    del d['archived_launches']
-                del d['spec']
-            if args.display_format == 'less':
-                if 'launches' in d:
-                    del d['launches']
-            fws.append(d)
-    if len(fws) == 1:
-        fws = fws[0]
-
-    print(args.output(fws))
+    print_fws(ids, lp, args)
 
 
 def get_fws_in_wfs(args):
@@ -345,28 +350,7 @@ def get_fws_in_wfs(args):
                                    count_only=args.display_format == 'count',
                                    launches_mode=args.launches_mode)
 
-    fws = []
-    if args.display_format == 'ids':
-        fws = ids
-    elif args.display_format == 'count':
-        fws = [ids]
-    else:
-        for id in ids:
-            fw = lp.get_fw_by_id(id)
-            d = fw.to_dict()
-            d['state'] = d.get('state', 'WAITING')
-            if args.display_format == 'more' or args.display_format == 'less':
-                if 'archived_launches' in d:
-                    del d['archived_launches']
-                del d['spec']
-            if args.display_format == 'less':
-                if 'launches' in d:
-                    del d['launches']
-            fws.append(d)
-    if len(fws) == 1:
-        fws = fws[0]
-
-    print(args.output(fws))
+    print_fws(ids, lp, args)
 
 
 def update_fws(args):
@@ -456,7 +440,11 @@ def detect_lostruns(args):
                                     refresh=args.refresh, query=query, launch_query=launch_query)
     lp.m_logger.debug('Detected {} lost launches: {}'.format(len(fl), fl))
     lp.m_logger.info('Detected {} lost FWs: {}'.format(len(ff), ff))
+    if args.display_format is not None and args.display_format != 'none':
+        print_fws(ff, lp, args)
     lp.m_logger.info('Detected {} inconsistent FWs: {}'.format(len(fi), fi))
+    if args.display_format is not None and args.display_format != 'none':
+        print_fws(fi, lp, args)
     if len(ff) > 0 and not args.fizzle and not args.rerun:
         print("You can fix lost FWs using the --rerun or --fizzle arguments to the "
               "detect_lostruns command")
@@ -467,7 +455,16 @@ def detect_lostruns(args):
 
 def detect_unreserved(args):
     lp = get_lp(args)
+    if args.display_format is not None and args.display_format != 'none':
+        unreserved = lp.detect_unreserved(expiration_secs=args.time, rerun=False)
+        # very inefficient, replace by mongo aggregation
+        fw_ids = []
+        for launch_id in unreserved:
+            launch = lp.get_launch_by_id(launch_id)
+            fw_ids.append(launch.fw_id)
+        print_fws(fw_ids, lp, args)
     print(lp.detect_unreserved(expiration_secs=args.time, rerun=args.rerun))
+
 
 
 def tuneup(args):
@@ -916,6 +913,7 @@ def lpad():
 
     # This makes common argument options easier to maintain. E.g., what if
     # there is a new state or disp option?
+    # NOTE: Those sets of standard options are not used consistently below (jotelha)
     fw_id_args = ["-i", "--fw_id"]
     fw_id_kwargs = {"type": str, "help": "fw_id"}
 
@@ -927,6 +925,12 @@ def lpad():
                    "default": "less",
                    "choices": ["all", "more", "less", "ids", "count",
                                "reservations"]}
+
+    # enhanced display options allow for value 'none' or None (default) for no output
+    enh_disp_args = copy.deepcopy(disp_args)
+    enh_disp_kwargs = copy.deepcopy(disp_kwargs)
+    enh_disp_kwargs["choices"].append("none")
+    enh_disp_kwargs["default"] = None
 
     query_args = ["-q", "--query"]
     query_kwargs = {"help": 'Query (enclose pymongo-style dict in '
@@ -1275,6 +1279,7 @@ def lpad():
     reservation_parser.add_argument('--time', help='expiration time (seconds)',
                                     default=RESERVATION_EXPIRATION_SECS, type=int)
     reservation_parser.add_argument('--rerun', help='cancel and rerun expired reservations', action='store_true')
+    reservation_parser.add_argument(*enh_disp_args, **enh_disp_kwargs)
     reservation_parser.set_defaults(func=detect_unreserved)
 
     fizzled_parser = subparsers.add_parser('detect_lostruns',
@@ -1294,6 +1299,7 @@ def lpad():
                                 help='restrict search to only FWs matching this query')
     fizzled_parser.add_argument('-lq', '--launch_query',
                                 help='restrict search to only launches matching this query')
+    fizzled_parser.add_argument(*enh_disp_args, **enh_disp_kwargs)
     fizzled_parser.set_defaults(func=detect_lostruns)
 
     priority_parser = subparsers.add_parser('set_priority', help='modify the priority of one or more FireWorks')
