@@ -476,7 +476,8 @@ class LaunchPad(FWSerializable):
         self.fireworks.insert_many(fw.to_db_dict() for fw in all_fws)
         return None
 
-    def append_wf(self, new_wf, fw_ids, detour=False, pull_spec_mods=True):
+    def append_wf(self, new_wf, fw_ids, detour=False, pull_spec_mods=True,
+                  root_fw_ids=None, leaf_fw_ids=None, propagate=False):
         """
         Append a new workflow on top of an existing workflow.
 
@@ -487,10 +488,18 @@ class LaunchPad(FWSerializable):
             original children of the parent fw_ids to the new_wf
             pull_spec_mods (bool): Whether the new Workflow should pull the FWActions of the parent
                 fw_ids
+            root_fw_ids ([int]): ids of fws within new_wf to attach to existing fw_ids. Default: new_wf.root_fw_ids
+            leaf_fw_ids ([int]): if marked as detour, children of fw_ids are attached to those ids within new_wf.
+                                 Default: new_wf.leaf_fw_ids
+            propagate (bool): propagate pulled update_spec and mod_spec down the addtion. See FWAction's documentation.
+                              Default: False.
         """
         wf = self.get_wf_by_fw_id(fw_ids[0])
         updated_ids = wf.append_wf(new_wf, fw_ids, detour=detour,
-                                   pull_spec_mods=pull_spec_mods)
+                                   pull_spec_mods=pull_spec_mods,
+                                   root_fw_ids=root_fw_ids,
+                                   leaf_fw_ids=leaf_fw_ids,
+                                   propagate=propagate)
         with WFLock(self, fw_ids[0]):
             self._update_wf(wf, updated_ids)
 

@@ -202,7 +202,10 @@ def append_wf(args):
         Workflow.from_file(args.wf_file),
         args.fw_id,
         detour=args.detour,
-        pull_spec_mods=args.pull_spec_mods
+        pull_spec_mods=args.pull_spec_mods,
+        root_fw_ids=args.root_fw_id,
+        leaf_fw_ids=args.leaf_fw_id,
+        propagate=args.propagate
     )
 
 
@@ -917,6 +920,12 @@ def lpad():
     fw_id_args = ["-i", "--fw_id"]
     fw_id_kwargs = {"type": str, "help": "fw_id"}
 
+    root_fw_id_args = ["-rfw", "--root_fw_id"]
+    root_fw_id_kwargs = {"type": str}
+
+    leaf_fw_id_args = ["-lfw", "--leaf_fw_id"]
+    leaf_fw_id_kwargs = {"type": str}
+
     state_args = ['-s', '--state']
     state_kwargs = {"type": lambda s: s.upper(), "help": "Select by state.",
                     "choices": list(Firework.STATE_RANKS.keys())}
@@ -967,9 +976,13 @@ def lpad():
     fw_prefixed_query_args = [re.sub('^-([^-].*)$','-fw\\1',s) for s in query_args]
     fw_prefixed_query_args = [re.sub('^--(.*)$','--fw_\\1',s) for s in fw_prefixed_query_args]
 
-    # filter all long options, i.e. '--fw_id' and strip off preceding '--'
+
+
+    # filter all long fw_id-related options, i.e. '--fw_id' and strip off preceding '--'
     fw_id_options = [re.sub('^--(.*)$', '\\1', opt)
-                     for opt in [*fw_id_args, *wf_prefixed_fw_id_args, *fw_prefixed_fw_id_args]
+                     for opt in [
+                        *fw_id_args, *wf_prefixed_fw_id_args, *fw_prefixed_fw_id_args,
+                        *root_fw_id_args, *leaf_fw_id_args]
                      if re.match('^--.*$', opt)]
 
     version_parser = subparsers.add_parser(
@@ -1027,7 +1040,22 @@ def lpad():
                                   action='store_true')
     append_wf_parser.add_argument('--no_pull_spec_mods', help='do not to pull spec mods from parent',
                                   dest='pull_spec_mods', action='store_false')
-    append_wf_parser.set_defaults(func=append_wf, detour=False, pull_spec_mods=True)
+    append_wf_parser.add_argument('--propagate', help='If true and pull_spec_mods set, then propagate '
+                                                      'pulled specs to all FWs in addition',
+                                  dest='propagate', action='store_true')
+    append_wf_parser.add_argument(*root_fw_id_args, **root_fw_id_kwargs,
+                                  help='use root_fw_id FWs as entry points into '
+                                       'addition or detour by appending them as children '
+                                       'to existing fw_ids. If not specfied, all dangling '
+                                       'roots of addition or detour are linked.')
+    append_wf_parser.add_argument(*leaf_fw_id_args, **leaf_fw_id_kwargs,
+                                  help='use leaf_fw_id FWs as exit points from '
+                                       'detour by appending children of existing fw_ids as children '
+                                       'to those leaf_fw_id FWs as well. If not specified, all dangling'
+                                       'leaves of detour are linked. An addition has not exit points.')
+
+    append_wf_parser.set_defaults(func=append_wf, detour=False, pull_spec_mods=True,
+                                  root_fw_id=None, leaf_fw_id=None, propagate=False)
 
     dump_wf_parser = subparsers.add_parser('dump_wflow', help='dump a workflow from launchpad to a file')
     dump_wf_parser.add_argument('-i', '--fw_id', type=int, help='the id of a firework from the workflow')
@@ -1465,6 +1493,7 @@ def lpad():
         # if no command supplied, print help
         parser.print_help()
     else:
+        # parse lists of fw_ids
         for opt in fw_id_options:
             if hasattr(args, opt) and getattr(args, opt) is not None and \
                     isinstance(getattr(args, opt), six.string_types):

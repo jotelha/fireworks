@@ -130,9 +130,9 @@ class FWAction(FWSerializable):
     as return commands that alter the workflow.
     """
 
-    def __init__(self, stored_data=None, exit=False, update_spec=None, mod_spec=None, additions=None,
-                 detours=None, defuse_children=False, defuse_workflow=False,
-                 propagate=False):
+    def __init__(self, stored_data=None, exit=False, update_spec=None, mod_spec=None,
+                 additions=None, detours=None, defuse_children=False, defuse_workflow=False,
+                 propagate=False, additions_root_fw_ids=None, detours_root_fw_ids=None, detours_leaf_fw_ids=None):
         """
         Args:
             stored_data (dict): data to store from the run. Does not affect the operation of FireWorks.
@@ -141,8 +141,17 @@ class FWAction(FWSerializable):
             mod_spec ([dict]): update the child FW's spec using the DictMod language (more flexible
                 than update_spec)
             additions ([Workflow]): a list of WFs/FWs to add as children
+            additions_root_fw_ids ([[int]]): a list of lists of FW ids to mark entry points for each addition
+                workflow that will be direct children of the addition-creating FW.
+                Default behavior uses all dangling roots in Workflow.root_fw_ids.
             detours ([Workflow]): a list of WFs/FWs to add as children (they will inherit the
                 current FW's children)
+            detours_root_fw_ids ([[int]]): a list of lists of FW ids to mark entry points for each detour
+                workflow that will be direct children of the detour-creating FW.
+                Default behavior uses all dangling roots in Workflow.root_fw_ids.
+            detours_leaf_fw_ids ([[int]]): a list of lists of FW ids to mark exit points for each detour
+                workflow. All children of the detour-creating FW will become children of those exit point FWs as well.
+                Default behavior uses all dangling leaves in Workflow.leaf_fw_ids.
             defuse_children (bool): defuse all the original children of this Firework
             defuse_workflow (bool): defuse all incomplete steps of this workflow
             propagate (bool): apply any update_spec and mod_spec modifications
@@ -157,8 +166,31 @@ class FWAction(FWSerializable):
         self.exit = exit
         self.update_spec = update_spec if update_spec else {}
         self.mod_spec = mod_spec if isinstance(mod_spec, (list, tuple)) else [mod_spec]
+
         self.additions = additions if isinstance(additions, (list, tuple)) else [additions]
+        self.additions_root_fw_ids = additions_root_fw_ids
+        if self.additions_root_fw_ids is not None:
+            if not isinstance(self.additions_root_fw_ids, (list, tuple)):
+                # assume we got single fw_id for single additon, pack twice
+                self.additions_root_fw_ids = [[self.additions_root_fw_ids]]
+            elif not isinstance(self.additions_root_fw_ids[0], (list, tuple)):
+                # assume we got one plain list for one addtion, pack once
+                self.additions_root_fw_ids = [self.additions_root_fw_ids]
+
         self.detours = detours if isinstance(detours, (list, tuple)) else [detours]
+        self.detours_root_fw_ids = detours_root_fw_ids
+        if self.detours_root_fw_ids is not None:
+            if not isinstance(self.detours_root_fw_ids, (list, tuple)):
+                self.detours_root_fw_ids = [[self.detours_root_fw_ids]]
+            elif not isinstance(self.detours_root_fw_ids[0], (list, tuple)):
+                self.detours_root_fw_ids = [self.detours_root_fw_ids]
+        self.detours_leaf_fw_ids = detours_leaf_fw_ids
+        if self.detours_leaf_fw_ids is not None:
+            if not isinstance(self.detours_leaf_fw_ids, (list, tuple)):
+                self.detours_leaf_fw_ids = [[self.detours_leaf_fw_ids]]
+            elif not isinstance(detours_leaf_fw_ids[0], (list, tuple)):
+                self.detours_leaf_fw_ids = [self.detours_leaf_fw_ids]
+
         self.defuse_children = defuse_children
         self.defuse_workflow = defuse_workflow
         self.propagate = propagate
@@ -170,7 +202,10 @@ class FWAction(FWSerializable):
                 'update_spec': self.update_spec,
                 'mod_spec': self.mod_spec,
                 'additions': self.additions,
+                'additions_root_fw_ids': self.additions_root_fw_ids,
                 'detours': self.detours,
+                'detours_root_fw_ids': self.detours_root_fw_ids,
+                'detours_leaf_fw_ids': self.detours_leaf_fw_ids,
                 'defuse_children': self.defuse_children,
                 'defuse_workflow': self.defuse_workflow,
                 'propagate': self.propagate}
@@ -181,10 +216,13 @@ class FWAction(FWSerializable):
         d = m_dict
         additions = [Workflow.from_dict(f) for f in d['additions']]
         detours = [Workflow.from_dict(f) for f in d['detours']]
+        # this initialization is not very robust against extensions as it
+        # purely relies on positional arguments
         return FWAction(d['stored_data'], d['exit'], d['update_spec'],
                         d['mod_spec'], additions, detours,
                         d['defuse_children'], d.get('defuse_workflow', False),
-                        d.get('propagate', False))
+                        d.get('propagate', False), d.get('additions_root_fw_ids', None),
+                        d.get('detours_root_fw_ids', None), d.get('detours_leaf_fw_ids', None))
 
     @property
     def skip_remaining_tasks(self):
@@ -879,8 +917,27 @@ class Workflow(FWSerializable):
 
         # add detour FireWorks. This should be done *before* additions
         if action.detours:
-            for wf in action.detours:
-                new_updates = self.append_wf(wf, [fw_id], detour=True, pull_spec_mods=False)
+            detours_root_fw_ids = [None]*len(action.detours)
+            detours_leaf_fw_ids = [None]*len(action.detours)
+
+            if hasattr(action, "detours_root_fw_ids") and (action.detours_root_fw_ids is not None):
+                detours_root_fw_ids = action.detours_root_fw_ids
+                if len(detours_root_fw_ids) != len(action.detours):
+                    raise ValueError("If specifying detours_root_fw_ids explicitly, then each detour needs a list of "
+                                     "leaf fws ids. This FWAction has {} detours, but {} detours_root_fw_ids.".format(
+                                        len(action.detours), len(detours_root_fw_ids)))
+
+            if hasattr(action, "detours_leaf_fw_ids") and (action.detours_leaf_fw_ids is not None):
+                detours_leaf_fw_ids = action.detours_leaf_fw_ids
+                if len(detours_leaf_fw_ids) != len(action.detours):
+                    raise ValueError("If specifying detours_leaf_fw_ids explicitly, then each detour needs a list of "
+                                     "leaf fws ids. This FWAction has {} detours, but {} detours_leaf_fw_ids.".format(
+                                        len(action.detours), len(detours_leaf_fw_ids)))
+
+            for wf, root_fw_ids, leaf_fw_ids in zip(action.detours, detours_root_fw_ids, detours_leaf_fw_ids):
+                new_updates = self.append_wf(wf, [fw_id], detour=True, pull_spec_mods=False,
+                                             root_fw_ids=root_fw_ids, leaf_fw_ids=leaf_fw_ids,
+                                             propagate=getattr(action, "propagate", False))
                 if len(set(updated_ids).intersection(new_updates)) > 0:
                     raise ValueError(
                         "Cannot use duplicated fw_ids when dynamically detouring workflows!")
@@ -888,8 +945,17 @@ class Workflow(FWSerializable):
 
         # add additional FireWorks
         if action.additions:
-            for wf in action.additions:
-                new_updates = self.append_wf(wf, [fw_id], detour=False, pull_spec_mods=False)
+            additions_root_fw_ids = [None]*len(action.additions)
+            if hasattr(action, "additions_root_fw_ids") and action.additions_root_fw_ids is not None:
+                additions_root_fw_ids = action.additions_root_fw_ids
+                if len(additions_root_fw_ids) != len(action.additions):
+                    raise ValueError("If specifying additions_root_fw_ids explicitly, then each detour needs a list of "
+                                     "leaf fws ids. This FWAction has {} additions, but {} additions_root_fw_ids.".format(
+                                        len(action.additions), len(additions_root_fw_ids)))
+
+            for wf, root_fw_ids in zip(action.additions, additions_root_fw_ids):
+                new_updates = self.append_wf(wf, [fw_id], detour=False, pull_spec_mods=False,
+                                             root_fw_ids=root_fw_ids, propagate=getattr(action, "propagate", False))
                 if len(set(updated_ids).intersection(new_updates)) > 0:
                     raise ValueError(
                         "Cannot use duplicated fw_ids when dynamically adding workflows!")
@@ -925,7 +991,8 @@ class Workflow(FWSerializable):
 
         return updated_ids
 
-    def append_wf(self, new_wf, fw_ids, detour=False, pull_spec_mods=False):
+    def append_wf(self, new_wf, fw_ids, detour=False, pull_spec_mods=False,
+                  root_fw_ids=None, leaf_fw_ids=None, propagate=False):
         """
         Method to add a workflow as a child to a Firework
         Note: detours must have children that have STATE_RANK that is WAITING or below
@@ -935,14 +1002,19 @@ class Workflow(FWSerializable):
             fw_ids ([int]): ids of the parent Fireworks on which to add the Workflow.
             detour (bool): add children of the current Firework to the Workflow's leaves.
             pull_spec_mods (bool): pull spec mods of COMPLETED parents, refreshes the WF states.
+            root_fw_ids ([int]): ids of fws within new_wf to attach to existing fw_ids. Default: new_wf.root_fw_ids
+            leaf_fw_ids ([int]): if marked as detour, children of fw_ids are attached to those ids within new_wf.
+                                 Default: new_wf.leaf_fw_ids
+            propagate (bool): propagate pulled update_spec and mod_spec down the addtion. See FWAction's documentation.
+                              Default: False.
 
         Returns:
             [int]: list of Firework ids that were updated or new
         """
         updated_ids = []
 
-        root_ids = new_wf.root_fw_ids
-        leaf_ids = new_wf.leaf_fw_ids
+        root_ids = root_fw_ids if root_fw_ids else new_wf.root_fw_ids
+        leaf_ids = leaf_fw_ids if leaf_fw_ids else new_wf.leaf_fw_ids
 
         # make sure detour runs do not link to ready/running/completed/etc. runs
         if detour:
@@ -986,11 +1058,15 @@ class Workflow(FWSerializable):
                     if m_launch:
                         # pull spec update
                         if m_launch.state == 'COMPLETED' and m_launch.action.update_spec:
-                            new_wf.id_fw[root_id].spec.update(m_launch.action.update_spec)
+                            # new_wf.id_fw[root_id].spec.update(m_launch.action.update_spec)
+                            fw_action = FWAction(update_spec=m_launch.action.update_spec, propagate=propagate)
+                            new_wf.apply_action(fw_action, root_id)
                         # pull spec mods
                         if m_launch.state == 'COMPLETED' and m_launch.action.mod_spec:
-                            for mod in m_launch.action.mod_spec:
-                                apply_mod(mod, new_wf.id_fw[root_id].spec)
+                            # for mod in m_launch.action.mod_spec:
+                            #    apply_mod(mod, new_wf.id_fw[root_id].spec)
+                            fw_action = FWAction(mod_spec=m_launch.action.mod_spec, propagate=propagate)
+                            new_wf.apply_action(fw_action, root_id)
 
         # set the FW state variable for all new fw ids to be WAITING
         for new_fw in new_wf.fws:
