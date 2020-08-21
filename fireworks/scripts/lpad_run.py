@@ -8,7 +8,7 @@ import six
 A runnable script for managing a FireWorks database (a command-line interface to launchpad.py)
 """
 
-from argparse import ArgumentParser, ArgumentTypeError
+from argparse import ArgumentParser, ArgumentTypeError, Action, HelpFormatter
 import copy
 import os
 import re
@@ -48,6 +48,55 @@ __date__ = 'Feb 7, 2013'
 DEFAULT_LPAD_YAML = "my_launchpad.yaml"
 
 
+# source: https://gist.github.com/thorsummoner/9850b5d6cd5e6bb5a3b9b7792b69b0a5
+class ActionFlagWithNo(Action):
+    """
+        Allows a 'no' prefix to disable store_true actions.
+        For example, --debug will have an additional --no-debug to explicitly disable it.
+    """
+    def __init__(self, opt_name, dest=None, default=True, required=False, help=None):
+        if isinstance(opt_name, str):
+            opt_name = [opt_name]
+
+        extended_opt_name = [
+            '--' + opt_name[0],
+            '--no-' + opt_name[0],
+        ]
+
+        if len(opt_name) > 1:
+            extended_opt_name += opt_name[1:]
+
+        super(ActionFlagWithNo, self).__init__(
+            extended_opt_name,
+            dest=(opt_name[0].replace('-', '_') if dest is None else dest),
+            nargs=0, const=None, default=default, required=required, help=help,
+        )
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        if option_string.startswith('--no-'):
+            setattr(namespace, self.dest, False)
+        else:
+            setattr(namespace, self.dest, True)
+
+
+class ActionFlagWithNoFormatter(HelpFormatter):
+    """
+        This changes the --help output, what is originally this:
+            --file, --no-file, -f
+        Will be condensed like this:
+            --[no-]file, -f
+    """
+
+    def _format_action_invocation(self, action):
+        if len(action.option_strings) > 1 and action.option_strings[1].startswith('--no-'):
+            help_txt = action.option_strings[0][:2] + '[no-]' + action.option_strings[0][2:]
+            if len(action.option_strings) > 2:
+                help_txt = ', '.join((help_txt, *action.option_strings[2:]))
+            return help_txt
+        else:
+            return super(ActionFlagWithNoFormatter, self)._format_action_invocation(action)
+
+
 def pw_check(ids, args, skip_pw=False):
     if len(ids) > PW_CHECK_NUM and not skip_pw:
         m_password = datetime.datetime.now().strftime('%Y-%m-%d')
@@ -60,6 +109,47 @@ def pw_check(ids, args, skip_pw=False):
             raise ValueError("Modifying more than {} entries requires setting the --password parameter! "
                              "(Today's date, e.g. 2012-02-25)".format(PW_CHECK_NUM))
     return ids
+
+
+def build_fw_query(args):
+    """Build query on fireworks collection from standard CLI arguments."""
+    if sum([bool(x) for x in [args.fw_id, args.name, args.state, args.query]]) > 1:
+        raise ValueError('Please specify exactly one of (fw_id, name, state, query)')
+    if sum([bool(x) for x in [args.fw_id, args.name, args.state, args.query]]) == 0:
+        args.query = '{}'
+        args.display_format = args.display_format if args.display_format else 'ids'
+    if sum([bool(x) for x in [args.fw_id, args.name, args.qid]]) > 1:
+        raise ValueError('Please specify exactly one of (fw_id, name, qid)')
+    else:
+        args.display_format = args.display_format if args.display_format else 'more'
+
+    if args.fw_id:
+        query = {'fw_id': {"$in": args.fw_id}}
+    elif args.name and not args.launches_mode:
+        query = {'name': args.name}
+    elif args.state:
+        query = {'state': args.state}
+    elif args.query:
+        query = ast.literal_eval(args.query)
+    else:
+        query = None
+
+    return query
+
+
+def parse_sort_arg(args):
+    if args.sort:
+        sort = [(args.sort, ASCENDING)]
+    elif args.rsort:
+        sort = [(args.rsort, DESCENDING)]
+    else:
+        sort = None
+
+    return sort
+
+
+def parse_max_arg(args):
+    return args.max if hasattr(args, "max") else 0
 
 
 def parse_helper(lp, args, wf_mode=False, skip_pw=False):
@@ -87,19 +177,13 @@ def parse_helper(lp, args, wf_mode=False, skip_pw=False):
     if args.state:
         query['state'] = args.state
 
-    if hasattr(args, "sort") and args.sort:
-        sort = [(args.sort, ASCENDING)]
-    elif hasattr(args, "rsort") and args.rsort:
-        sort = [(args.rsort, DESCENDING)]
-    else:
-        sort = None
-
-    max = args.max if hasattr(args, "max") else 0
+    sort = parse_sort_arg(args)
+    limit = parse_max_arg(args)
 
     if wf_mode:
-        return pw_check(lp.get_wf_ids(query, sort=sort, limit=max), args, skip_pw)
+        return pw_check(lp.get_wf_ids(query, sort=sort, limit=limit), args, skip_pw)
 
-    return pw_check(lp.get_fw_ids(query, sort=sort, limit=max, launches_mode=args.launches_mode),
+    return pw_check(lp.get_fw_ids(query, sort=sort, limit=limit, launches_mode=args.launches_mode),
                     args, skip_pw)
 
 
@@ -228,7 +312,7 @@ def add_wf_dir(args):
 
 
 def print_fws(ids, lp, args):
-    """Prints results of some FireWorks query to stdout."""
+    """Print results of some FireWorks query to stdout."""
     fws = []
     if args.display_format == 'ids':
         fws = ids
@@ -252,44 +336,22 @@ def print_fws(ids, lp, args):
 
     print(args.output(fws))
 
+
 def get_fws(args):
     lp = get_lp(args)
-    if sum([bool(x) for x in [args.fw_id, args.name, args.state, args.query]]) > 1:
-        raise ValueError('Please specify exactly one of (fw_id, name, state, query)')
-    if sum([bool(x) for x in [args.fw_id, args.name, args.state, args.query]]) == 0:
-        args.query = '{}'
-        args.display_format = args.display_format if args.display_format else 'ids'
-    if sum([bool(x) for x in [args.fw_id, args.name, args.qid]]) > 1:
-        raise ValueError('Please specify exactly one of (fw_id, name, qid)')
-    else:
-        args.display_format = args.display_format if args.display_format else 'more'
 
-    if args.fw_id:
-        query = {'fw_id': {"$in": args.fw_id}}
-    elif args.name and not args.launches_mode:
-        query = {'name': args.name}
-    elif args.state:
-        query = {'state': args.state}
-    elif args.query:
-        query = ast.literal_eval(args.query)
-    else:
-        query = None
-
-    if args.sort:
-        sort = [(args.sort, ASCENDING)]
-    elif args.rsort:
-        sort = [(args.rsort, DESCENDING)]
-    else:
-        sort = None
+    query = build_fw_query(args)
+    sort = parse_sort_arg(args)
+    limit = parse_max_arg(args)
 
     if args.qid:
         ids = lp.get_fw_ids_from_reservation_id(args.qid)
         if query:
             query['fw_id'] = {"$in": ids}
-            ids = lp.get_fw_ids(query, sort, args.max, launches_mode=args.launches_mode)
+            ids = lp.get_fw_ids(query, sort, limit, launches_mode=args.launches_mode)
 
     else:
-        ids = lp.get_fw_ids(query, sort, args.max, count_only=args.display_format == 'count',
+        ids = lp.get_fw_ids(query, sort, limit, count_only=args.display_format == 'count',
                             launches_mode=args.launches_mode)
     print_fws(ids, lp, args)
 
@@ -333,23 +395,19 @@ def get_fws_in_wfs(args):
     else:
         fw_query = None
 
-    if args.sort:
-        sort = [(args.sort, ASCENDING)]
-    elif args.rsort:
-        sort = [(args.rsort, DESCENDING)]
-    else:
-        sort = None
+    sort = parse_sort_arg(args)
+    limit = parse_max_arg(args)
 
     if args.qid:
         ids = lp.get_fw_ids_from_reservation_id(args.qid)
         if fw_query:
             fw_query['fw_id'] = {"$in": ids}
             ids = lp.get_fw_ids_in_wfs(wf_query=wf_query, fw_query=fw_query,
-                                       sort=sort, limit=args.max,
+                                       sort=sort, limit=limit,
                                        launches_mode=args.launches_mode)
     else:
         ids = lp.get_fw_ids_in_wfs(wf_query=wf_query, fw_query=fw_query,
-                                   sort=sort, limit=args.max,
+                                   sort=sort, limit=limit,
                                    count_only=args.display_format == 'count',
                                    launches_mode=args.launches_mode)
 
@@ -381,14 +439,10 @@ def get_wfs(args):
     else:
         query = ast.literal_eval(args.query)
 
-    if args.sort:
-        sort = [(args.sort, ASCENDING)]
-    elif args.rsort:
-        sort = [(args.rsort, DESCENDING)]
-    else:
-        sort = None
+    sort = parse_sort_arg(args)
+    limit = parse_max_arg(args)
 
-    ids = lp.get_wf_ids(query, sort, args.max, count_only=args.display_format == 'count')
+    ids = lp.get_wf_ids(query, sort, limit, count_only=args.display_format == 'count')
     if args.display_format == 'ids':
         wfs = ids
     elif args.display_format == 'count':
@@ -467,7 +521,6 @@ def detect_unreserved(args):
             fw_ids.append(launch.fw_id)
         print_fws(fw_ids, lp, args)
     print(lp.detect_unreserved(expiration_secs=args.time, rerun=args.rerun))
-
 
 
 def tuneup(args):
@@ -676,6 +729,25 @@ def add_scripts(args):
     lp.add_wf(Workflow(fws, links, args.wf_name))
 
 
+def get_offline(args):
+    lp = get_lp(args)
+    query = build_fw_query(args)
+    sort = parse_sort_arg(args)
+    limit = parse_max_arg(args)
+
+    offline_query = {}
+    if args.completed is not None:
+        offline_query["completed"] = args.completed
+    if args.deprecated is not None:
+        offline_query["deprecated"] = args.deprecated
+
+    fw_ids = lp.get_offline_fw_ids(offline_query=offline_query,
+                                   fw_query=query, sort=sort, limit=limit,
+                                   count_only=args.display_format == 'count',
+                                   launches_mode=args.launches_mode)
+    print_fws(fw_ids, lp, args)
+
+
 def recover_offline(args):
     lp = get_lp(args)
     fworker_name = FWorker.from_file(args.fworker_file).name if args.fworker_file else None
@@ -777,42 +849,18 @@ def maintain(args):
 def orphaned(args):
     # get_fws
     lp = get_lp(args)
-    if sum([bool(x) for x in [args.fw_id, args.name, args.state, args.query]]) > 1:
-        raise ValueError('Please specify exactly one of (fw_id, name, state, query)')
-    if sum([bool(x) for x in [args.fw_id, args.name, args.state, args.query]]) == 0:
-        args.query = '{}'
-        args.display_format = args.display_format if args.display_format else 'ids'
-    if sum([bool(x) for x in [args.fw_id, args.name, args.qid]]) > 1:
-        raise ValueError('Please specify exactly one of (fw_id, name, qid)')
-    else:
-        args.display_format = args.display_format if args.display_format else 'more'
-
-    if args.fw_id:
-        query = {'fw_id': {"$in": args.fw_id}}
-    elif args.name and not args.launches_mode:
-        query = {'name': args.name}
-    elif args.state:
-        query = {'state': args.state}
-    elif args.query:
-        query = ast.literal_eval(args.query)
-    else:
-        query = None
-
-    if args.sort:
-        sort = [(args.sort, ASCENDING)]
-    elif args.rsort:
-        sort = [(args.rsort, DESCENDING)]
-    else:
-        sort = None
+    query = build_fw_query(args)
+    sort = parse_sort_arg(args)
+    limit = parse_max_arg(args)
 
     if args.qid:
         fw_ids = lp.get_fw_ids_from_reservation_id(args.qid)
         if query:
             query['fw_id'] = {"$in": fw_ids}
-            fw_ids = lp.get_fw_ids(query, sort, args.max, launches_mode=args.launches_mode)
+            fw_ids = lp.get_fw_ids(query, sort, limit, launches_mode=args.launches_mode)
     else:
-        fw_ids = lp.get_fw_ids(query, sort, args.max,
-                            launches_mode=args.launches_mode)
+        fw_ids = lp.get_fw_ids(query, sort, limit,
+                               launches_mode=args.launches_mode)
 
     # get_wfs
     orphaned_fw_ids = []
@@ -881,7 +929,6 @@ def orphaned(args):
         # lp.workflows.delete_one({'nodes': fw_id})
     else:
         print(args.output(fws))
-
 
 
 def get_output_func(format):
@@ -976,8 +1023,6 @@ def lpad():
 
     fw_prefixed_query_args = [re.sub('^-([^-].*)$','-fw\\1',s) for s in query_args]
     fw_prefixed_query_args = [re.sub('^--(.*)$','--fw_\\1',s) for s in fw_prefixed_query_args]
-
-
 
     # filter all long fw_id-related options, i.e. '--fw_id' and strip off preceding '--'
     fw_id_options = [re.sub('^--(.*)$', '\\1', opt)
@@ -1104,12 +1149,34 @@ def lpad():
     get_fw_in_wf_parser.add_argument(*qid_args, **qid_kwargs)
     get_fw_in_wf_parser.add_argument(*disp_args, **disp_kwargs)
     get_fw_in_wf_parser.add_argument('-m', '--max', help='limit results', default=0,
-                               type=int)
+                                     type=int)
     get_fw_in_wf_parser.add_argument('--sort', help='Sort results',
-                               choices=["created_on", "updated_on"])
+                                     choices=["created_on", "updated_on"])
     get_fw_in_wf_parser.add_argument('--rsort', help='Reverse sort results',
-                               choices=["created_on", "updated_on"])
+                                     choices=["created_on", "updated_on"])
     get_fw_in_wf_parser.set_defaults(func=get_fws_in_wfs)
+
+    get_offline_parser = subparsers.add_parser(
+        'get_offline', formatter_class=ActionFlagWithNoFormatter,
+        help='get information about FireWorks with offline runs attached')
+    get_offline_parser.add_argument(*fw_id_args, **fw_id_kwargs)
+    get_offline_parser.add_argument('-n', '--name', help='get FWs with this name')
+    get_offline_parser.add_argument(*state_args, **state_kwargs)
+    get_offline_parser.add_argument(*query_args, **query_kwargs)
+    get_offline_parser.add_argument(*launches_mode_args, **launches_mode_kwargs)
+    get_offline_parser.add_argument(*qid_args, **qid_kwargs)
+    get_offline_parser.add_argument(*disp_args, **disp_kwargs)
+    get_offline_parser.add_argument('-m', '--max', help='limit results', default=0,
+                               type=int)
+    get_offline_parser.add_argument('--sort', help='Sort results',
+                               choices=["created_on", "updated_on"])
+    get_offline_parser.add_argument('--rsort', help='Reverse sort results',
+                               choices=["created_on", "updated_on"])
+    get_offline_parser._add_action(ActionFlagWithNo(['completed'], default=None,
+                                   help='only query offline runs (not) marked as "completed"'))
+    get_offline_parser._add_action(ActionFlagWithNo(['deprecated'], default=None,
+                                   help='only query offline runs (not) marked as "deprecated"'))
+    get_offline_parser.set_defaults(func=get_offline)
 
     trackfw_parser = subparsers.add_parser('track_fws', help='Track FireWorks')
     trackfw_parser.add_argument(*fw_id_args, **fw_id_kwargs)
@@ -1303,11 +1370,11 @@ def lpad():
     get_qid_parser.add_argument(*query_args, **query_kwargs)
     get_qid_parser.add_argument(*launches_mode_args, **launches_mode_kwargs)
     get_qid_parser.add_argument('-m', '--max', help='limit results', default=0,
-                               type=int)
+                                type=int)
     get_qid_parser.add_argument('--sort', help='Sort results',
-                               choices=["created_on", "updated_on"])
+                                choices=["created_on", "updated_on"])
     get_qid_parser.add_argument('--rsort', help='Reverse sort results',
-                               choices=["created_on", "updated_on"])
+                                choices=["created_on", "updated_on"])
 
     get_qid_parser.set_defaults(func=get_qid)
 
@@ -1393,7 +1460,8 @@ def lpad():
     recover_parser.add_argument('-pe', '--print-errors', help='print errors', action='store_true')
     recover_parser.set_defaults(func=recover_offline)
 
-    forget_parser = subparsers.add_parser('forget_offline', help='forget offline workflows')
+    forget_parser = subparsers.add_parser('forget_offline', help='forget offline runs')
+    forget_parser.add_argument(*fw_id_args, **fw_id_kwargs)
     forget_parser.add_argument('-n', '--name', help='name')
     forget_parser.add_argument(*state_args, **state_kwargs)
     forget_parser.add_argument(*query_args, **query_kwargs)

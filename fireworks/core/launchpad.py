@@ -2169,6 +2169,77 @@ class LaunchPad(FWSerializable):
                                              {"$set": {"completed": True}})
             return m_launch.fw_id
 
+    def get_offline_fw_ids(self, offline_query=None, fw_query=None, sort=None,
+                           limit=0, count_only=False, launches_mode=False):
+        """
+        Return all offline fw ids that match query.
+
+        Args:
+            offline_query (dict): a Mongo query on offline runs
+                Default: {"completed": False, "deprecated": False}.
+            fw_query (dict): a Mongo query on Fireworks
+            sort [(str,str)]: sort argument in Pymongo format
+            limit (int): limit the results
+            count_only (bool): only return the count rather than explicit ids
+            launches_mode (bool): query the launches collection instead of fireworks
+
+        Returns:
+            list: list of firework ids matching the query
+        """
+        coll = "launches" if launches_mode else "fireworks"
+
+        if launches_mode:
+            lids = self._get_active_launch_ids()
+            if fw_query is None:
+                fw_query = {}
+            fw_query["launch_id"] = {"$in": lids}
+
+        if count_only:
+            if limit:
+                return ValueError(
+                    "Cannot count_only and limit at the same time!")
+
+        aggregation = []
+
+        if offline_query is not None:
+            aggregation.append({'$match': offline_query},)
+
+        aggregation.extend([
+            {'$project': {'fw_id': True, 'launch_id': True, '_id': False}},
+            {'$unwind': '$fw_id'},
+            {'$lookup': {
+                'from': coll,  # fireworks or launches
+                'localField': 'fw_id',
+                'foreignField': 'fw_id',
+                'as': 'fireworks'}},
+            {'$project': {'fireworks': 1, '_id': 0}},
+            {'$unwind': '$fireworks'},
+            {'$replaceRoot': {'newRoot': '$fireworks'}},
+        ])
+
+        if fw_query is not None:
+            aggregation.append({'$match': fw_query})
+
+        if count_only:
+            aggregation.append({'$count': 'count'})
+            self.m_logger.debug("Aggregation '{}'.".format(aggregation))
+
+            cursor = self.offline_runs.aggregate(aggregation)
+            res = list(cursor)
+            return res[0]['count'] if len(res) > 0 else 0
+
+        if sort is not None:
+            aggregation.extend(sort_aggregation(sort))
+
+        aggregation.append({'$project': {'fw_id': True, '_id': False}})
+
+        if limit is not None and limit > 0:
+            aggregation.append({'$limit': limit})
+
+        self.m_logger.debug("Aggregation '{}'.".format(aggregation))
+        cursor = self.offline_runs.aggregate(aggregation)
+        return [fw["fw_id"] for fw in cursor]
+
     def forget_offline(self, launchid_or_fwid, launch_mode=True):
         """
         Unmark the offline run for the given launch or firework id.
