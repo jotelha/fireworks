@@ -590,7 +590,8 @@ def unlock(args):
 
 def get_qid(args):
     lp = get_lp(args)
-    for f in args.fw_id:
+    fw_ids = parse_helper(lp, args, wf_mode=False, skip_pw=True)
+    for f in fw_ids:
         print(lp.get_reservation_id_from_fw_id(f))
 
 
@@ -1297,6 +1298,17 @@ def lpad():
 
     get_qid_parser = subparsers.add_parser('get_qids', help='get the queue id of a Firework')
     get_qid_parser.add_argument(*fw_id_args, **fw_id_kwargs)
+    get_qid_parser.add_argument('-n', '--name', help='name')
+    get_qid_parser.add_argument(*state_args, **state_kwargs)
+    get_qid_parser.add_argument(*query_args, **query_kwargs)
+    get_qid_parser.add_argument(*launches_mode_args, **launches_mode_kwargs)
+    get_qid_parser.add_argument('-m', '--max', help='limit results', default=0,
+                               type=int)
+    get_qid_parser.add_argument('--sort', help='Sort results',
+                               choices=["created_on", "updated_on"])
+    get_qid_parser.add_argument('--rsort', help='Reverse sort results',
+                               choices=["created_on", "updated_on"])
+
     get_qid_parser.set_defaults(func=get_qid)
 
     cancel_qid_parser = subparsers.add_parser('cancel_qid', help='cancel a reservation')
