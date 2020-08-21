@@ -2030,40 +2030,121 @@ class LaunchPad(FWSerializable):
                             m_launch.launch_dir))
                     m_launch.touch_history(checkpoint=checkpoint)
 
-            if 'fwaction' in offline_data:
-                fwaction = FWAction.from_dict(offline_data['fwaction'])
-                m_launch.state = offline_data['state']
-                self.launches.find_one_and_replace(
-                    {'launch_id': m_launch.launch_id}, m_launch.to_db_dict(),
-                    upsert=True)
+                # 'fwaction' can only be prsent after 'started_on', nesting
+                if 'fwaction' in offline_data:
+                    fwaction = FWAction.from_dict(offline_data['fwaction'])
+                    m_launch.state = offline_data['state']
+                    self.launches.find_one_and_replace(
+                        {'launch_id': m_launch.launch_id}, m_launch.to_db_dict(),
+                        upsert=True)
 
-                m_launch = Launch.from_dict(
-                    self.complete_launch(launch_id, fwaction, m_launch.state))
+                    m_launch = Launch.from_dict(
+                        self.complete_launch(launch_id, fwaction, m_launch.state))
 
-                for s in m_launch.state_history:
-                    if s['state'] == offline_data['state']:
-                        s['created_on'] = reconstitute_dates(
-                            offline_data['completed_on'])
-                self.launches.find_one_and_update(
-                    {'launch_id': m_launch.launch_id},
-                    {'$set': {'state_history': m_launch.state_history}})
+                    for s in m_launch.state_history:
+                        if s['state'] == offline_data['state']:
+                            s['created_on'] = reconstitute_dates(
+                                offline_data['completed_on'])
+                    self.launches.find_one_and_update(
+                        {'launch_id': m_launch.launch_id},
+                        {'$set': {'state_history': m_launch.state_history}})
 
-                self.offline_runs.update_one({"launch_id": launch_id},
-                                             {"$set": {"completed": True}})
+                    self.offline_runs.update_one({"launch_id": launch_id},
+                                                 {"$set": {"completed": True}})
 
-            else:
-                l = self.launches.find_one_and_replace(
-                    {'launch_id': m_launch.launch_id},
-                    m_launch.to_db_dict(), upsert=True)
-                fw_id = l['fw_id']
-                f = self.fireworks.find_one_and_update({'fw_id': fw_id},
-                                                       {'$set': {
-                                                           'state': 'RUNNING',
-                                                           'updated_on': datetime.datetime.utcnow()}})
-                if f:
-                    self._refresh_wf(fw_id)
+                else:
+                    # no FWAction in offline_data marks the Fireworks as RUNNING.
+                    # That's risky:
+                    #
+                    # The queue launcher sets up the Firework as an
+                    # offline run by writing nothing except the launch id to
+                    # FW_offline.json and adding a document
+                    # {
+                    #   'fw_id': ...,
+                    #   'launch_id': ... ,
+                    #   'name': ...,
+                    #    'created_on': ...,
+                    #    'updated_on': ...,
+                    #    'deprecated': False,
+                    #    'completed': False,
+                    # }
+                    #
+                    # to the offline_runs colleciton.
+                    #
+                    # What if the actual rocket dies before
+                    # writing anything to FW_offline.json?
+                    #
+                    # It's fireworks and launches entry might look like
+                    #
+                    # {
+                    #     "fw_id": 38017,
+                    #     "created_on": "2020-07-29T01:47:40.573970",
+                    #     "updated_on": "2020-08-21T16:41:24.065000",
+                    #     "launches": [
+                    #         {
+                    #             "fworker": ...
+                    #             "fw_id": 38017,
+                    #             "launch_dir": ...
+                    #             "host": ...
+                    #             "ip": ...
+                    #             "trackers": [],
+                    #             "action": null,
+                    #             "state": "RESERVED",
+                    #             "state_history": [
+                    #                 {
+                    #                     "state": "RESERVED",
+                    #                     "created_on": "2020-07-30T05:21:36.020271",
+                    #                     "updated_on": "2020-07-30T05:21:36.020280",
+                    #                     "reservation_id": "2470004"
+                    #                 }
+                    #             ],
+                    #             "launch_id": 32086
+                    #         }
+                    #     ],
+                    #     "state": "RUNNING",
+                    #     "name": "n=175, m=175, GromacsPull:GromacsVacuumTrajectoryAnalysis:analysis_rdf"
+                    # }
+                    #
+                    # without any RUNNING entry in the "state_history".
+                    # Thus, detect_lostruns will never find it with the crucial
+                    # query part matching only RUNNING entries, not RESERVED:
+                    #
+                    #     lostruns_query["state_history"] = {'$elemMatch': {'state': 'RUNNING',
+                    #                                                       'updated_on': {
+                    #                                                             '$lte': cutoff_timestr}
+                    #                                                       }
+                    #                                        }
+                    #
+                    # Howerer it's "state" and "updated_on" field are continuously
+                    # kept at RUNNING and the current time by recover_offline.
+                    # Thus, detect_unreserved won't find it neither as it's
+                    # been marked as RUNNING by recover_offline.
+                    #
+                    # Thus, I suggest to nest this clause one level lower and
+                    # never write any RUNNING state if the rocket has not
+                    # touched the FW_offline.json.
+                    l = self.launches.find_one_and_replace(
+                        {'launch_id': m_launch.launch_id},
+                        m_launch.to_db_dict(), upsert=True)
+                    fw_id = l['fw_id']
 
-            # update the updated_on
+                    f = self.fireworks.find_one_and_update({'fw_id': fw_id},
+                                                           {'$set': {
+                                                               'state': 'RUNNING',
+                                                               'updated_on': datetime.datetime.utcnow()}})
+                    if f:
+                        self._refresh_wf(fw_id)
+
+            # What different purposes do the offline_run 'updated_on' and the
+            # fireworks 'updated_on' fulfill? Does the former mark the latest
+            # read on the FW_offline.json file and the latter an actual status
+            # updated from the Firework itself? If so, then I would like to
+            # suggest not to update the RUNNING state at every call of
+            # recover_offline by the current time, but try to infer the
+            # true time the rocket reported its status from
+            # a) time in FW_ping.json
+            # b) os.stat mtime of FW_ping.json
+            # c) os.stat mtime of FW_offline.json
             self.offline_runs.update_one({"launch_id": launch_id},
                                          {"$set": {
                                              "updated_on": datetime.datetime.utcnow().isoformat()}})
