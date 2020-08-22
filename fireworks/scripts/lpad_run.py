@@ -289,7 +289,9 @@ def append_wf(args):
         pull_spec_mods=args.pull_spec_mods,
         root_fw_ids=args.root_fw_id,
         leaf_fw_ids=args.leaf_fw_id,
-        propagate=args.propagate
+        propagate=args.propagate,
+        detach_children=args.detach,
+        detach_fw_ids=args.detach_fw_id,
     )
 
 
@@ -974,6 +976,9 @@ def lpad():
     leaf_fw_id_args = ["-lfw", "--leaf_fw_id"]
     leaf_fw_id_kwargs = {"type": str}
 
+    detach_fw_id_args = ["-dfw", "--detach_fw_id"]
+    detach_fw_id_kwargs = {"type": str}
+
     state_args = ['-s', '--state']
     state_kwargs = {"type": lambda s: s.upper(), "help": "Select by state.",
                     "choices": list(Firework.STATE_RANKS.keys())}
@@ -1004,31 +1009,31 @@ def lpad():
     # for using fw- and wf-specific options on one command line, distinguish by prefix fw and wf
     # prefix short one-dash options with 'wf', i.e. '-i' -> '-wfi'
     # prefix long two-dash options with 'wf_', i.e. '--fw_id' -> '--wf_fw_id'
-    wf_prefixed_fw_id_args = [re.sub('^-([^-].*)$','-wf\\1',s) for s in fw_id_args]
-    wf_prefixed_fw_id_args = [re.sub('^--(.*)$','--wf_\\1',s) for s in wf_prefixed_fw_id_args]
+    wf_prefixed_fw_id_args = [re.sub('^-([^-].*)$', '-wf\\1', s) for s in fw_id_args]
+    wf_prefixed_fw_id_args = [re.sub('^--(.*)$', '--wf_\\1', s) for s in wf_prefixed_fw_id_args]
 
-    wf_prefixed_state_args = [re.sub('^-([^-].*)$','-wf\\1',s) for s in state_args]
-    wf_prefixed_state_args = [re.sub('^--(.*)$','--wf_\\1',s) for s in wf_prefixed_state_args]
+    wf_prefixed_state_args = [re.sub('^-([^-].*)$', '-wf\\1', s) for s in state_args]
+    wf_prefixed_state_args = [re.sub('^--(.*)$', '--wf_\\1', s) for s in wf_prefixed_state_args]
 
-    wf_prefixed_query_args = [re.sub('^-([^-].*)$','-wf\\1',s) for s in query_args]
-    wf_prefixed_query_args = [re.sub('^--(.*)$','--wf_\\1',s) for s in wf_prefixed_query_args]
+    wf_prefixed_query_args = [re.sub('^-([^-].*)$', '-wf\\1', s) for s in query_args]
+    wf_prefixed_query_args = [re.sub('^--(.*)$', '--wf_\\1', s) for s in wf_prefixed_query_args]
 
     # prefix short one-dash options with 'fw', i.e. '-i' -> '-fwi'
     # prefix long two-dash options with 'fw_', i.e. '--fw_id' -> '--fw_fw_id'
-    fw_prefixed_fw_id_args = [re.sub('^-([^-].*)$','-fw\\1',s) for s in fw_id_args]
-    fw_prefixed_fw_id_args = [re.sub('^--(.*)$','--fw_\\1',s) for s in fw_prefixed_fw_id_args]
+    fw_prefixed_fw_id_args = [re.sub('^-([^-].*)$', '-fw\\1', s) for s in fw_id_args]
+    fw_prefixed_fw_id_args = [re.sub('^--(.*)$', '--fw_\\1', s) for s in fw_prefixed_fw_id_args]
 
-    fw_prefixed_state_args = [re.sub('^-([^-].*)$','-fw\\1',s) for s in state_args]
-    fw_prefixed_state_args = [re.sub('^--(.*)$','--fw_\\1',s) for s in fw_prefixed_state_args]
+    fw_prefixed_state_args = [re.sub('^-([^-].*)$', '-fw\\1', s) for s in state_args]
+    fw_prefixed_state_args = [re.sub('^--(.*)$', '--fw_\\1', s) for s in fw_prefixed_state_args]
 
-    fw_prefixed_query_args = [re.sub('^-([^-].*)$','-fw\\1',s) for s in query_args]
-    fw_prefixed_query_args = [re.sub('^--(.*)$','--fw_\\1',s) for s in fw_prefixed_query_args]
+    fw_prefixed_query_args = [re.sub('^-([^-].*)$', '-fw\\1', s) for s in query_args]
+    fw_prefixed_query_args = [re.sub('^--(.*)$', '--fw_\\1', s) for s in fw_prefixed_query_args]
 
     # filter all long fw_id-related options, i.e. '--fw_id' and strip off preceding '--'
     fw_id_options = [re.sub('^--(.*)$', '\\1', opt)
                      for opt in [
                         *fw_id_args, *wf_prefixed_fw_id_args, *fw_prefixed_fw_id_args,
-                        *root_fw_id_args, *leaf_fw_id_args]
+                        *root_fw_id_args, *leaf_fw_id_args, *detach_fw_id_args]
                      if re.match('^--.*$', opt)]
 
     version_parser = subparsers.add_parser(
@@ -1097,11 +1102,20 @@ def lpad():
     append_wf_parser.add_argument(*leaf_fw_id_args, **leaf_fw_id_kwargs,
                                   help='use leaf_fw_id FWs as exit points from '
                                        'detour by appending children of existing fw_ids as children '
-                                       'to those leaf_fw_id FWs as well. If not specified, all dangling'
+                                       'to those leaf_fw_id FWs as well. If not specified, all dangling '
                                        'leaves of detour are linked. An addition has not exit points.')
-
+    append_wf_parser.add_argument('--detach',
+                                  help='detach all parent-child links from parent fws identified by fw_id to their '
+                                       'children. This can be used to dynamically insert a detour "fixing" a FIZZLED '
+                                       'Firework, subsequently allowing the remaining part of the original Workflow to '
+                                       'continue as originally intended.',
+                                  dest='detach', action='store_true')
+    append_wf_parser.add_argument(*detach_fw_id_args, **detach_fw_id_kwargs,
+                                  help='specify children to detach explcitly instead of detaching all. '
+                                        'Only comes into effect if "--detach" enabled')
     append_wf_parser.set_defaults(func=append_wf, detour=False, pull_spec_mods=True,
-                                  root_fw_id=None, leaf_fw_id=None, propagate=False)
+                                  root_fw_id=None, leaf_fw_id=None, propagate=False,
+                                  detach=False, detach_fw_id=None)
 
     dump_wf_parser = subparsers.add_parser('dump_wflow', help='dump a workflow from launchpad to a file')
     dump_wf_parser.add_argument('-i', '--fw_id', type=int, help='the id of a firework from the workflow')

@@ -992,7 +992,8 @@ class Workflow(FWSerializable):
         return updated_ids
 
     def append_wf(self, new_wf, fw_ids, detour=False, pull_spec_mods=False,
-                  root_fw_ids=None, leaf_fw_ids=None, propagate=False):
+                  root_fw_ids=None, leaf_fw_ids=None, propagate=False,
+                  detach_children=False, detach_fw_ids=None):
         """
         Method to add a workflow as a child to a Firework
         Note: detours must have children that have STATE_RANK that is WAITING or below
@@ -1007,6 +1008,12 @@ class Workflow(FWSerializable):
                                  Default: new_wf.leaf_fw_ids
             propagate (bool): propagate pulled update_spec and mod_spec down the addtion. See FWAction's documentation.
                               Default: False.
+            detach_children (bool): detach all parent-child links from parent fws identified by fw_ids to their
+                                    children. This can be used to dynamically insert a detour "fixing" a FIZZLED
+                                    Firework, subsequently allowing the remaining part of the original Workflow to
+                                    continue as originally intended. Default: False.
+            detach_fw_ids ([int]): only detach a specifc set of children from parent fw_ids instead of all,
+                                   without effect if 'detach_children' not True. Default: None.
 
         Returns:
             [int]: list of Firework ids that were updated or new
@@ -1015,6 +1022,8 @@ class Workflow(FWSerializable):
 
         root_ids = root_fw_ids if root_fw_ids else new_wf.root_fw_ids
         leaf_ids = leaf_fw_ids if leaf_fw_ids else new_wf.leaf_fw_ids
+        detach_ids = detach_fw_ids if detach_fw_ids else [
+            child_fw_id for fw_id in fw_ids for child_fw_id in self.links[fw_id]]
 
         # make sure detour runs do not link to ready/running/completed/etc. runs
         if detour:
@@ -1067,6 +1076,9 @@ class Workflow(FWSerializable):
                             #    apply_mod(mod, new_wf.id_fw[root_id].spec)
                             fw_action = FWAction(mod_spec=m_launch.action.mod_spec, propagate=propagate)
                             new_wf.apply_action(fw_action, root_id)
+
+            if detach_children:
+                self.links[fw_id] = [child_fw_id for child_fw_id in self.links[fw_id] if child_fw_id not in detach_ids]
 
         # set the FW state variable for all new fw ids to be WAITING
         for new_fw in new_wf.fws:

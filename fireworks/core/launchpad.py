@@ -477,7 +477,8 @@ class LaunchPad(FWSerializable):
         return None
 
     def append_wf(self, new_wf, fw_ids, detour=False, pull_spec_mods=True,
-                  root_fw_ids=None, leaf_fw_ids=None, propagate=False):
+                  root_fw_ids=None, leaf_fw_ids=None, propagate=False,
+                  detach_children=False, detach_fw_ids=None):
         """
         Append a new workflow on top of an existing workflow.
 
@@ -493,13 +494,21 @@ class LaunchPad(FWSerializable):
                                  Default: new_wf.leaf_fw_ids
             propagate (bool): propagate pulled update_spec and mod_spec down the addtion. See FWAction's documentation.
                               Default: False.
+            detach_children (bool): detach all parent-child links from parent fws identified by fw_ids to their
+                                    children. This can be used to dynamically insert a detour "fixing" a FIZZLED
+                                    Firework, subsequently allowing the remaining part of the original Workflow to
+                                    continue as originally intended. Default: False.
+            detach_fw_ids ([int]): only detach a specifc set of children from parent fw_ids instead of all,
+                                   without effect if 'detach_children' not True. Default: None.
         """
         wf = self.get_wf_by_fw_id(fw_ids[0])
         updated_ids = wf.append_wf(new_wf, fw_ids, detour=detour,
                                    pull_spec_mods=pull_spec_mods,
                                    root_fw_ids=root_fw_ids,
                                    leaf_fw_ids=leaf_fw_ids,
-                                   propagate=propagate)
+                                   propagate=propagate,
+                                   detach_children=detach_children,
+                                   detach_fw_ids=detach_fw_ids)
         with WFLock(self, fw_ids[0]):
             self._update_wf(wf, updated_ids)
 
