@@ -866,14 +866,23 @@ class Workflow(FWSerializable):
             """Certain mods are never desired for propagation."""
             filtered_mod_spec = []
             for mod in mod_spec:
-                filtered_mod_spec_entry = {}
-                for key, val in mod.items():
-                    if depth > 0 and key == '_set' and isinstance(val, str) and val.startswith('_files_prev'):
-                        pass  # do not propagate out files further than direct children in any case
+                filtered_mod_spec_action = {}
+                for command, arguments in mod.items():
+                    if command == '_set' and isinstance(arguments, dict):
+                        filtered_mod_spec_action_arguments = {}
+                        for key, val in arguments.items():
+                            if depth > 0 and isinstance(val, str) and val.startswith('_files_prev'):
+                                pass  # do not propagate _files_prev further than direct children in any case
+                            else:
+                                filtered_mod_spec_action_arguments[key] = val
                     else:
-                        filtered_mod_spec_entry[key] = val
-                if len(filtered_mod_spec_entry) > 0:
-                    filtered_mod_spec.append(filtered_mod_spec_entry)
+                        filtered_mod_spec_action_arguments = arguments
+
+                    if len(filtered_mod_spec_action_arguments > 0):
+                        filtered_mod_spec_action[command] = filtered_mod_spec_action_arguments
+
+                if len(filtered_mod_spec_action_arguments) > 0:
+                    filtered_mod_spec.append(filtered_mod_spec_action)
             return filtered_mod_spec
 
         if action.update_spec and action.propagate:
