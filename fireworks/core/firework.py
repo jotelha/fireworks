@@ -830,7 +830,7 @@ class Workflow(FWSerializable):
             for mod in mod_spec:
                 filtered_mod_spec_entry = {}
                 for key, val in mod.items():
-                    if depth > 0 and key == '_set' and val.startswith('_files_prev'):
+                    if depth > 0 and key == '_set' and isinstance(val, str) and val.startswith('_files_prev'):
                         pass  # do not propagate out files further than direct children in any case
                     else:
                         filtered_mod_spec_entry[key] = val
@@ -875,7 +875,7 @@ class Workflow(FWSerializable):
                             apply_mod(mod, self.id_fw[cfid].spec)
                         updated_ids.append(cfid)
                         recursive_mod_spec(cfid, depth+1)
-                        
+
             recursive_mod_spec(fw_id)
         elif action.mod_spec:
             for cfid in self.links[fw_id]:
