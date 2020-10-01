@@ -856,47 +856,68 @@ class Workflow(FWSerializable):
         """
         updated_ids = []
 
-        # note: update specs before inserting additions to give user more control
-        # see: https://github.com/materialsproject/fireworks/pull/407
+        # propagating _files_prev as well and lead to unpredicted
+        # behavior. Thus, exclude for depth > 0 in recursive mod_spec below.
+        def filter_propagate_update_spec(update_spec, depth=0):
+            """Dummy, so far no updates excluded."""
+            return update_spec
 
-        # update the spec of the children FireWorks
+        def filter_propagate_mod_spec(mod_spec, depth=0):
+            """Certain mods are never desired for propagation."""
+            filtered_mod_spec = []
+            for mod in mod_spec:
+                filtered_mod_spec_entry = {}
+                for key, val in mod.items():
+                    if depth > 0 and key == '_set' and val.startswith('_files_prev'):
+                        pass  # do not propagate out files further than direct children in any case
+                    else:
+                        filtered_mod_spec_entry[key] = val
+                if len(filtered_mod_spec_entry) > 0:
+                    filtered_mod_spec.append(filtered_mod_spec_entry)
+            return filtered_mod_spec
+
         if action.update_spec and action.propagate:
             # Traverse whole sub-workflow down to leaves.
             visited_cfid = set()  # avoid double-updating for diamond deps
 
-            def recursive_update_spec(fw_id):
+            def recursive_update_spec(fw_id, depth=0):
                 for cfid in self.links[fw_id]:
                     if cfid not in visited_cfid:
                         visited_cfid.add(cfid)
-                        self.id_fw[cfid].spec.update(action.update_spec)
+                        self.id_fw[cfid].spec.update(
+                            filter_propagate_update_spec(
+                                action.update_spec, depth)
+                            )
                         updated_ids.append(cfid)
-                        recursive_update_spec(cfid)
+                        recursive_update_spec(cfid, depth+1)
 
             recursive_update_spec(fw_id)
         elif action.update_spec:
             # Update only direct children.
             # Kept original code here for "backwards readability".
             for cfid in self.links[fw_id]:
-                self.id_fw[cfid].spec.update(action.update_spec)
+                self.id_fw[cfid].spec.update(
+                    filter_propagate_update_spec(action.update_spec)
+                )
                 updated_ids.append(cfid)
 
         # update the spec of the children FireWorks using DictMod language
         if action.mod_spec and action.propagate:
             visited_cfid = set()
 
-            def recursive_mod_spec(fw_id):
+            def recursive_mod_spec(fw_id, depth=0):
                 for cfid in self.links[fw_id]:
                     if cfid not in visited_cfid:
                         visited_cfid.add(cfid)
-                        for mod in action.mod_spec:
+                        for mod in filter_propagate_mod_spec(action.mod_spec, depth):
                             apply_mod(mod, self.id_fw[cfid].spec)
                         updated_ids.append(cfid)
-                        recursive_mod_spec(cfid)
+                        recursive_mod_spec(cfid, depth+1)
 
             recursive_mod_spec(fw_id)
         elif action.mod_spec:
             for cfid in self.links[fw_id]:
-                for mod in action.mod_spec:
+                for mod in filter_propagate_mod_spec(action.mod_spec):
                     apply_mod(mod, self.id_fw[cfid].spec)
                 updated_ids.append(cfid)  # seems to me the indentation had been wrong here
 
