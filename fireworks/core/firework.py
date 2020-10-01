@@ -878,7 +878,7 @@ class Workflow(FWSerializable):
                     else:
                         filtered_mod_spec_action_arguments = arguments
 
-                    if len(filtered_mod_spec_action_arguments > 0):
+                    if len(filtered_mod_spec_action_arguments) > 0:
                         filtered_mod_spec_action[command] = filtered_mod_spec_action_arguments
 
                 if len(filtered_mod_spec_action_arguments) > 0:
