@@ -871,7 +871,7 @@ class Workflow(FWSerializable):
                     if command == '_set' and isinstance(arguments, dict):
                         filtered_mod_spec_action_arguments = {}
                         for key, val in arguments.items():
-                            if depth > 0 and isinstance(val, str) and val.startswith('_files_prev'):
+                            if depth > 0 and isinstance(key, str) and key.startswith('_files_prev'):
                                 pass  # do not propagate _files_prev further than direct children in any case
                             else:
                                 filtered_mod_spec_action_arguments[key] = val

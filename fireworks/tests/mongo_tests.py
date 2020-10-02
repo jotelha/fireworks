@@ -69,6 +69,25 @@ class ModSpecTask(FiretaskBase):
         print('Running the Mod Spec Task')
         return FWAction(mod_spec=[{"_push": {"dummy2": True}}])
 
+@explicit_serialize
+class DoNothingTask(FiretaskBase):
+    def run_task(self, fw_spec):
+        pass
+
+@explicit_serialize
+class PropagateModSpecSetTask(FiretaskBase):
+    def run_task(self, fw_spec):
+        print('Running the Mod Spec Set Task')
+        return FWAction(
+            mod_spec=[{"_set": {"mod_spec_set": True}}],
+            propagate=True)
+
+@explicit_serialize
+class PropagateScriptTask(ScriptTask):
+    def run_task(self, fw_spec):
+        fw_action = super().run_task(fw_spec)
+        fw_action.propagate = True
+        return fw_action
 
 class MongoTests(unittest.TestCase):
 
@@ -596,6 +615,62 @@ class MongoTests(unittest.TestCase):
         workflow_results=s.get_workflow_summary(time_field="updated_on")
         self.assertEqual((workflow_results[0]["_id"], workflow_results[0]["count"]), ("COMPLETED", 3))
 
+    def test_propagate_mod_spec(self):
+        # Create the Workflow that passes files_in and files_out and propagates FWAction mod_spec.
+        # The latter one of the two tasks has their propagate flag set on their FWAction object.
+        # This activates propagation for the whole Fireworks, not just for the specific task.
+        fw1 = Firework([PropagateScriptTask.from_str('echo "This is the first FireWork" > fw1_hello.txt'),
+                        PropagateModSpecSetTask()],  # PropagateModSpecSetTask applies {'_set':{'mod_spec_set':True}}
+                       fw_id=1,
+                       spec={"_files_out": {"hello_file": "fw1_hello.txt"}})
+        fw2 = Firework([ScriptTask.from_str('echo "This is the second FireWork" > fw2_another_hello.txt')],
+                       fw_id=2,
+                       parents=[fw1],
+                       spec={"_files_in": {"hello_file": "fw2_hello.txt"},
+                             "_files_out": {"another_hello_file": "fw2_another_hello.txt"}})
+        fw3 = Firework([ScriptTask.from_str('cat fw3_another_hello.txt')],
+                       fw_id=3,
+                       parents=[fw2],
+                       spec={"_files_in": {"hello_file": "fw3_hello.txt",
+                                           "another_hello_file": "fw3_another_hello.txt"}})
+        # mod_spec propagated from fw1 must apply to fw3 as well. An exception
+        # is the automatic {'_set':{ '_files_prev->...':'...'}} mod_spec action,
+        # which is never propagated. Hence...
+
+        wf = Workflow([fw1, fw2, fw3],
+                      {fw1: [fw2], fw2: [fw3]})
+
+        self.lp.add_wf(wf)
+        launch_rocket(self.lp, self.fworker)
+        self.assertTrue(os.path.exists("fw1_hello.txt"))
+        launch_rocket(self.lp, self.fworker)
+        self.assertTrue(os.path.exists("fw2_hello.txt"))
+        self.assertTrue(os.path.exists("fw2_another_hello.txt"))
+        launch_rocket(self.lp, self.fworker)
+        #  ... fw3 has not received 'hello_file', ...
+        self.assertFalse(os.path.exists("fw3_hello.txt"))
+        self.assertTrue(os.path.exists("fw3_another_hello.txt"))
+
+        fw2 = self.lp.get_fw_by_id(2)
+        # ... fw2 must have mod_spec_set set to true ...
+        self.assertEqual(fw2.spec['mod_spec_set'], True)
+        self.assertEqual(len(fw2.spec['_files_prev']), 1)
+        label, path = list(fw2.spec['_files_prev'].items())[0]
+        self.assertEqual(label, 'hello_file')
+        _, filename = os.path.split(path)
+        self.assertEqual(filename, 'fw1_hello.txt')
+
+        fw3 = self.lp.get_fw_by_id(3)
+        # ... and fw3 as well.
+        self.assertEqual(fw3.spec['mod_spec_set'], True)
+        self.assertEqual(len(fw3.spec['_files_prev']), 1)
+        label, path = list(fw3.spec['_files_prev'].items())[0]
+        self.assertEqual(label, 'another_hello_file')
+        _, filename = os.path.split(path)
+        self.assertEqual(filename, 'fw2_another_hello.txt')
+
+        for f in ["fw1_hello.txt", "fw2_hello.txt", "fw2_another_hello.txt", "fw3_another_hello.txt"]:
+            os.remove(f)
 
 if __name__ == "__main__":
     unittest.main()
