@@ -890,22 +890,19 @@ class Workflow(FWSerializable):
             visited_cfid = set()  # avoid double-updating for diamond deps
             queue = []
 
-            def recursive_update_spec(fw_id, depth=0):
-                """Breadth-first search for children to apply update_spec."""
-                queue.append((fw_id, depth))
-                while len(queue) > 0:
-                    fw_id, depth = queue.pop(0)
-                    for cfid in self.links[fw_id]:
-                        if cfid not in visited_cfid:
-                            visited_cfid.add(cfid)
-                            self.id_fw[cfid].spec.update(
-                                filter_propagate_update_spec(
-                                    action.update_spec, depth)
-                                )
-                            updated_ids.append(cfid)
-                            queue.append((cfid, depth+1))
-
-            recursive_update_spec(fw_id)
+            # Breadth-first search for children to apply update_spec.
+            queue.append((fw_id, 0))  # queue tuples of fw_id and depth (i.e. distance from fw_id)
+            while len(queue) > 0:
+                fw_id, depth = queue.pop(0)
+                for cfid in self.links[fw_id]:
+                    if cfid not in visited_cfid:
+                        visited_cfid.add(cfid)
+                        self.id_fw[cfid].spec.update(
+                            filter_propagate_update_spec(
+                                action.update_spec, depth)
+                            )
+                        updated_ids.append(cfid)
+                        queue.append((cfid, depth+1))
 
         elif action.update_spec:
             # Update only direct children.
@@ -921,21 +918,18 @@ class Workflow(FWSerializable):
             visited_cfid = set()
             queue = []
 
-            def recursive_mod_spec(fw_id, depth=0):
-                """Breadth-first search for children apply mod_spec."""
-                queue.append((fw_id, depth))
-                while len(queue) > 0:
-                    fw_id, depth = queue.pop(0)
-                    for cfid in self.links[fw_id]:
-                        if cfid not in visited_cfid:
-                            visited_cfid.add(cfid)
-                            for mod in filter_propagate_mod_spec(action.mod_spec, depth):
-                                apply_mod(mod, self.id_fw[cfid].spec)
-                            updated_ids.append(cfid)
-                            queue.append((cfid, depth+1))
+            # Breadth-first search for children apply mod_spec.
+            queue.append((fw_id, 0))  # queue tuples of fw_id and depth (i.e. distance from fw_id)
+            while len(queue) > 0:
+                fw_id, depth = queue.pop(0)
+                for cfid in self.links[fw_id]:
+                    if cfid not in visited_cfid:
+                        visited_cfid.add(cfid)
+                        for mod in filter_propagate_mod_spec(action.mod_spec, depth):
+                            apply_mod(mod, self.id_fw[cfid].spec)
+                        updated_ids.append(cfid)
+                        queue.append((cfid, depth+1))
 
-            recursive_mod_spec(fw_id)
-            
         elif action.mod_spec:
             for cfid in self.links[fw_id]:
                 for mod in filter_propagate_mod_spec(action.mod_spec):
