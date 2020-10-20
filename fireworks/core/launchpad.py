@@ -478,7 +478,7 @@ class LaunchPad(FWSerializable):
 
     def append_wf(self, new_wf, fw_ids, detour=False, pull_spec_mods=True,
                   root_fw_ids=None, leaf_fw_ids=None, propagate=False,
-                  detach_children=False, detach_fw_ids=None):
+                  detach_children=False, detach_fw_ids=None, force=False):
         """
         Append a new workflow on top of an existing workflow.
 
@@ -508,7 +508,8 @@ class LaunchPad(FWSerializable):
                                    leaf_fw_ids=leaf_fw_ids,
                                    propagate=propagate,
                                    detach_children=detach_children,
-                                   detach_fw_ids=detach_fw_ids)
+                                   detach_fw_ids=detach_fw_ids,
+                                   force=force)
         with WFLock(self, fw_ids[0]):
             self._update_wf(wf, updated_ids)
 

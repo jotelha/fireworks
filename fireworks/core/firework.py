@@ -1023,7 +1023,7 @@ class Workflow(FWSerializable):
 
     def append_wf(self, new_wf, fw_ids, detour=False, pull_spec_mods=False,
                   root_fw_ids=None, leaf_fw_ids=None, propagate=False,
-                  detach_children=False, detach_fw_ids=None):
+                  detach_children=False, detach_fw_ids=None, force=False):
         """
         Method to add a workflow as a child to a Firework
         Note: detours must have children that have STATE_RANK that is WAITING or below
@@ -1044,6 +1044,7 @@ class Workflow(FWSerializable):
                                     continue as originally intended. Default: False.
             detach_fw_ids ([int]): only detach a specifc set of children from parent fw_ids instead of all,
                                    without effect if 'detach_children' not True. Default: None.
+            force (bool): if True, then append even if the fws concerned have already run. Default: false
 
         Returns:
             [int]: list of Firework ids that were updated or new
@@ -1056,7 +1057,7 @@ class Workflow(FWSerializable):
             child_fw_id for fw_id in fw_ids for child_fw_id in self.links[fw_id]]
 
         # make sure detour runs do not link to ready/running/completed/etc. runs
-        if detour:
+        if detour and not force:
             for fw_id in fw_ids:
                 if fw_id in self.links:
                     # make sure all of these links are WAITING, else the DETOUR is not well defined
