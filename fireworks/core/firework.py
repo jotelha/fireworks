@@ -28,7 +28,7 @@ from six import add_metaclass
 
 from fireworks.fw_config import TRACKER_LINES, NEGATIVE_FWID_CTR, EXCEPT_DETAILS_ON_RERUN
 from fireworks.core.fworker import FWorker
-from fireworks.utilities.dict_mods import apply_mod
+from fireworks.utilities.dict_mods import apply_mod, dict_select, dict_inject
 from fireworks.utilities.fw_serializers import FWSerializable, recursive_serialize, \
     recursive_deserialize, serialize_fw
 from fireworks.utilities.fw_utilities import get_my_host, get_my_ip, NestedClassGetter
@@ -1029,7 +1029,11 @@ class Workflow(FWSerializable):
 
     def append_wf(self, new_wf, fw_ids, detour=False, pull_spec_mods=False,
                   root_fw_ids=None, leaf_fw_ids=None, propagate=False,
-                  detach_children=False, detach_fw_ids=None):
+                  detach_children=False, detach_fw_ids=None,
+                  parent_fw_spec_to_include=None,
+                  superpose_child_on_parent_fw_spec=False,
+                  parent_fw_spec_source_fw_id=None,
+                  ):
         """
         Method to add a workflow as a child to a Firework
         Note: detours must have children that have STATE_RANK that is WAITING or below
@@ -1050,11 +1054,47 @@ class Workflow(FWSerializable):
                                     continue as originally intended. Default: False.
             detach_fw_ids ([int]): only detach a specifc set of children from parent fw_ids instead of all,
                                    without effect if 'detach_children' not True. Default: None.
-
+            parent_fw_spec_to_include ([str] or {str: str}): all Fireworks of appended workflow will inherit the
+                parent Fireworks fw_spec. In the case of multiple parents, will refer to parent_fw_spec_source_fw_id
+                to figure out which parent's fw_spec to use.
+                Default: None
+            superpose_child_on_parent_fw_spec (bool):
+                If 'parent_fw_spec_to_include' is specified, thn this flag decides whether parent's or child's
+                fw_spec take precedence in the case of conflict. Default: False.
+            parent_fw_spec_source_fw_id (int):
+                If 'parent_fw_spec_to_include' is specified and there exist multiple parents, this must specify fw_id
+                of parentto provide fw_spec. Will fail otherwise. Default: None.
         Returns:
             [int]: list of Firework ids that were updated or new
         """
         updated_ids = []
+
+        if isinstance(parent_fw_spec_to_include, list):
+            parent_fw_spec_to_include_dict = {k: True for k in parent_fw_spec_to_include}
+        else:  # supposed to be dict then
+            parent_fw_spec_to_include_dict = parent_fw_spec_to_include
+
+        # apply parent fw spec to all appended fws if desired
+        if parent_fw_spec_to_include_dict is not None:
+            if len(fw_ids) > 1 and isinstance(parent_fw_spec_source_fw_id, int):
+                parent_fw_id = parent_fw_spec_source_fw_id  # ATTENTION: no asserion on whether that is a parent
+            elif len(fw_ids) > 1:
+                raise ValueError('More than one parent fw not supported if parent_fw_spec set and parent_fw_spec_source_fw_id not specified.')
+            else:
+                parent_fw_id = fw_ids[0]
+
+            m_fw = self.id_fw[parent_fw_id]  # get the parent FW
+            parent_fw_spec = dict_select(m_fw.spec, parent_fw_spec_to_include_dict)
+
+            for new_fw in new_wf.fws:
+                child_fw_spec = new_fw.spec
+
+                if superpose_child_on_parent_fw_spec:
+                    merged_fw_spec = dict_inject(parent_fw_spec, child_fw_spec)
+                else:
+                    merged_fw_spec = dict_inject(child_fw_spec, parent_fw_spec)
+
+                new_fw.spec = merged_fw_spec
 
         root_ids = root_fw_ids if root_fw_ids else new_wf.root_fw_ids
         leaf_ids = leaf_fw_ids if leaf_fw_ids else new_wf.leaf_fw_ids
@@ -1103,15 +1143,17 @@ class Workflow(FWSerializable):
                     if m_launch:
                         # pull spec update
                         if m_launch.state == 'COMPLETED' and m_launch.action.update_spec:
-                            # new_wf.id_fw[root_id].spec.update(m_launch.action.update_spec)
                             fw_action = FWAction(update_spec=m_launch.action.update_spec, propagate=propagate)
-                            new_wf.apply_action(fw_action, root_id)
+                            new_wf.id_fw[root_id].spec.update(fw_action.update_spec)
+                            if fw_action.propagate:
+                                new_wf.apply_action(fw_action, root_id)  # only applies to children
                         # pull spec mods
                         if m_launch.state == 'COMPLETED' and m_launch.action.mod_spec:
-                            # for mod in m_launch.action.mod_spec:
-                            #    apply_mod(mod, new_wf.id_fw[root_id].spec)
                             fw_action = FWAction(mod_spec=m_launch.action.mod_spec, propagate=propagate)
-                            new_wf.apply_action(fw_action, root_id)
+                            for mod in fw_action.mod_spec:  # apply to this fw
+                                apply_mod(mod, new_wf.id_fw[root_id].spec)
+                            if fw_action.propagate:
+                                new_wf.apply_action(fw_action, root_id)  # only applies to children
 
             if detach_children:
                 self.links[fw_id] = [child_fw_id for child_fw_id in self.links[fw_id] if child_fw_id not in detach_ids]

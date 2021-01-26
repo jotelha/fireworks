@@ -478,7 +478,11 @@ class LaunchPad(FWSerializable):
 
     def append_wf(self, new_wf, fw_ids, detour=False, pull_spec_mods=True,
                   root_fw_ids=None, leaf_fw_ids=None, propagate=False,
-                  detach_children=False, detach_fw_ids=None):
+                  detach_children=False, detach_fw_ids=None,
+                  parent_fw_spec_to_include=None,
+                  superpose_child_on_parent_fw_spec=False,
+                  parent_fw_spec_source_fw_id=None,
+                  ):
         """
         Append a new workflow on top of an existing workflow.
 
@@ -500,6 +504,16 @@ class LaunchPad(FWSerializable):
                                     continue as originally intended. Default: False.
             detach_fw_ids ([int]): only detach a specifc set of children from parent fw_ids instead of all,
                                    without effect if 'detach_children' not True. Default: None.
+            parent_fw_spec_to_include ([str] or {str: str}): all Fireworks of appended workflow will inherit the
+                parent Fireworks fw_spec. In the case of multiple parents, will refer to parent_fw_spec_source_fw_id
+                to figure out which parent's fw_spec to use.
+                Default: None
+            superpose_child_on_parent_fw_spec (bool):
+                If 'parent_fw_spec_to_include' is specified, thn this flag decides whether parent's or child's
+                fw_spec take precedence in the case of conflict. Default: False.
+            parent_fw_spec_source_fw_id (int):
+                If 'parent_fw_spec_to_include' is specified and there exist multiple parents, this must specify fw_id
+                of parentto provide fw_spec. Will fail otherwise. Default: None.
         """
         wf = self.get_wf_by_fw_id(fw_ids[0])
         updated_ids = wf.append_wf(new_wf, fw_ids, detour=detour,
@@ -508,7 +522,11 @@ class LaunchPad(FWSerializable):
                                    leaf_fw_ids=leaf_fw_ids,
                                    propagate=propagate,
                                    detach_children=detach_children,
-                                   detach_fw_ids=detach_fw_ids)
+                                   detach_fw_ids=detach_fw_ids,
+                                   parent_fw_spec_to_include=parent_fw_spec_to_include,
+                                   superpose_child_on_parent_fw_spec=superpose_child_on_parent_fw_spec,
+                                   parent_fw_spec_source_fw_id=parent_fw_spec_source_fw_id,
+                                   )
         with WFLock(self, fw_ids[0]):
             self._update_wf(wf, updated_ids)
 
