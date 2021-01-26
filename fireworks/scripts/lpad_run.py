@@ -470,6 +470,15 @@ def get_wfs(args):
         print(args.output(wfs))
 
 
+def delete_launchdirs(args):
+    lp = get_lp(args)
+    fw_ids = parse_helper(lp, args, wf_mode=True)
+    for f in fw_ids:
+        lp.delete_launchdirs(f)
+        lp.m_logger.debug('Processed fw_id: {}'.format(f))
+    lp.m_logger.info('Finished deleting {} launchdirs'.format(len(fw_ids)))
+
+
 def delete_wfs(args):
     lp = get_lp(args)
     fw_ids = parse_helper(lp, args, wf_mode=True)
@@ -1360,6 +1369,18 @@ def lpad():
                                                    "required when modifying more than {} "
                                                    "entries.".format(PW_CHECK_NUM))
     archive_parser.set_defaults(func=archive)
+
+    delete_launchdirs_parser = subparsers.add_parser(
+        'delete_launchdirs', help='Delete launchdirs of worklows.')
+    delete_launchdirs_parser.add_argument(*fw_id_args, **fw_id_kwargs)
+    delete_launchdirs_parser.add_argument('-n', '--name', help='name')
+    delete_launchdirs_parser.add_argument(*state_args, **state_kwargs)
+    delete_launchdirs_parser.add_argument(*query_args, **query_kwargs)
+    delete_launchdirs_parser.add_argument('--password', help="Today's date, e.g. 2012-02-25. "
+                                                      "Password or positive response to input prompt "
+                                                      "required when modifying more than {} "
+                                                      "entries.".format(PW_CHECK_NUM))
+    delete_launchdirs_parser.set_defaults(func=delete_launchdirs)
 
     delete_wfs_parser = subparsers.add_parser(
         'delete_wflows', help='Delete workflows (permanently). Use "archive_wflows" instead if '
