@@ -10,7 +10,7 @@ This code is based heavily on the Ansible class of custodian <https://pypi.pytho
 but simplifies it considerably for the limited use cases required by FireWorks.
 """
 
-# import collections
+import copy
 import json
 import logging
 import re
@@ -73,6 +73,8 @@ def dict_inject(base_dct, injection_dct, add_keys=True):
     """ Recursively inject inject_dict into base_dict. Recurses down into dicts nested
     to an arbitrary depth, updating keys.
 
+    Will not alter base_dct or injection_dct, but return a deep copy without references to any of the former.
+
     The optional argument ``add_keys``, determines whether keys which are
     present in ``injection_dct`` but not ``base_dict`` should be included in the
     new dict.
@@ -95,8 +97,8 @@ def dict_inject(base_dct, injection_dct, add_keys=True):
     if isinstance(injection_dct, dict) and isinstance(base_dct, dict):
         logger.debug("Treating 'base_dct' and 'injection_dct' as parallel dicts...")
 
-        dct = base_dct
-        injection_dct = injection_dct.copy()
+        dct = copy.deepcopy(base_dct)
+        # injection_dct = injection_dct.copy()
         for k, v in injection_dct.items():
             if k in base_dct and isinstance(base_dct[k], dict) and isinstance(v, dict):
                 logger.debug("Descending into key '{}' for further injection.".format(k))
@@ -106,7 +108,7 @@ def dict_inject(base_dct, injection_dct, add_keys=True):
                     logger.debug("Replacing dict item '{}: {}' with injection '{}'.".format(k, dct[k], injection_dct[k]))
                 else:
                     logger.debug("Inserting injection '{}' at key '{}'.".format(injection_dct[k], k))
-                dct[k] = v
+                dct[k] = copy.deepcopy(v)
 
     elif isinstance(injection_dct, list) and isinstance(base_dct, list) and (len(injection_dct) == len(base_dct)):
         logger.debug("Treating 'base_dct' and 'injection_dct' as parallel lists...")
@@ -120,12 +122,12 @@ def dict_inject(base_dct, injection_dct, add_keys=True):
                 dct.append(dict_inject(base, injection, add_keys=add_keys))
             else:
                 logger.debug("Replacing list item '{}' with injection '{}'.".format(base, injection))
-                dct.append(injection)
+                dct.append(copy.deepcopy(injection))
 
     else:  # arrived at leaf, inject
         logger.debug("Treating 'base_dct' and 'injection_dct' as values.")
         logger.debug("Replacing '{}' with injection '{}'.".format(base_dct, injection_dct))
-        dct = injection_dct
+        dct = copy.deepcopy(injection_dct)
 
     return dct
 
